@@ -1,0 +1,22 @@
+[project]
+name = "llm-dspy"
+version = "0.1"
+description = "Plugin for LLM adding DSPy template support"
+dependencies = [
+    "llm",
+    "dspy-ai"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=llm_dspy"
+
+[project.entry-points.llm]
+dspy = "llm_dspy" 

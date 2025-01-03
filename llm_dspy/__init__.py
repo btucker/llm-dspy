@@ -3,8 +3,8 @@ import dspy
 import re
 import click
 import sys
+import litellm
 from typing import List, Tuple, Dict, Any, Optional
-from dspy.clients.provider import Provider
 from dspy.primitives.prediction import Prediction
 
 __all__ = ['run_dspy_module', 'register_commands']
@@ -13,7 +13,23 @@ __all__ = ['run_dspy_module', 'register_commands']
 class LLMAdapter:
     """Adapter to convert LLM responses into DSPy-compatible format."""
     def __init__(self):
-        self.llm = llm.get_model()
+        try:
+            self.llm = llm.get_model()
+        except llm.UnknownModelError:
+            # If no model is set, try to get the default model
+            try:
+                self.llm = llm.get_model("gpt-3.5-turbo")
+            except llm.UnknownModelError:
+                # If that fails too, use the first available model
+                models = llm.get_models()
+                if not models:
+                    raise RuntimeError("No LLM models available")
+                self.llm = models[0]
+        
+        self.kwargs = {
+            "temperature": 0.7,  # Default temperature
+            "max_tokens": 1000,  # Default max tokens
+        }
 
     def __call__(self, prompt: str, **kwargs) -> str:
         response = self.llm.prompt(prompt)
@@ -22,69 +38,28 @@ class LLMAdapter:
             pass
         return response.text_or_raise()
 
-# DSPy Provider Implementation
-class LLMProvider(Provider):
-    """DSPy provider that uses LLM for completions."""
-    def __init__(self):
-        super().__init__()
-        self.finetunable = False
-        self._adapter = None
-
-    @staticmethod
-    def is_provider_model(model: str) -> bool:
-        return model.startswith("llm/")
-
-    def get_adapter(self):
-        if self._adapter is None:
-            self._adapter = LLMAdapter()
-        return self._adapter
-
-    def __call__(self, model: str, prompt=None, messages=None, **kwargs):
-        adapter = self.get_adapter()
-
-        if prompt is not None:
-            response = adapter(prompt, **kwargs)
-        elif messages is not None:
-            prompt = "\n".join(f"{msg['role']}: {msg['content']}" for msg in messages)
-            response = adapter(prompt, **kwargs)
+    def basic_create(self, prompt: str, **kwargs) -> Dict[str, Any]:
+        """Basic completion creation that follows OpenAI's format."""
+        if isinstance(prompt, str):
+            messages = [{"role": "user", "content": prompt}]
         else:
-            raise ValueError("Either prompt or messages must be provided")
-
-        # Create a dictionary with all possible output fields
-        output_dict = {
-            "answer": response,
-            "text": response,
-            "response": response,
-            "output": response,
-            "result": response,
-            "confidence": 1.0  # Default confidence
+            messages = prompt.get("messages", [])
+        
+        # Extract the actual prompt from the messages
+        prompt_text = "\n".join(msg["content"] for msg in messages)
+        response = self.__call__(prompt_text, **kwargs)
+        
+        return {
+            "choices": [{
+                "text": response,
+                "message": {
+                    "content": response,
+                    "role": "assistant"
+                }
+            }],
+            "model": "local",  # Use a generic model name
+            "usage": {"total_tokens": 0}  # We don't track token usage
         }
-        return Prediction(**output_dict)
-
-# LiteLLM Integration
-def litellm_completion(request: Dict[str, Any], num_retries: int = 8, cache={"no-cache": True, "no-store": True}, **kwargs) -> Dict[str, Any]:
-    """Handle litellm completion requests by using our LLM adapter."""
-    adapter = LLMAdapter()
-    messages = request.get("messages", [])
-    prompt = "\n".join(f"{msg['role']}: {msg['content']}" for msg in messages) if messages else request.get("prompt", "")
-    
-    response = adapter(prompt)
-    
-    return {
-        "choices": [{
-            "text": response,  # Add text field for non-chat models
-            "message": {
-                "content": response,
-                "role": "assistant"
-            }
-        }],
-        "model": request.get("model", "llm/default"),
-        "usage": {"total_tokens": 0},  # We don't track token usage
-    }
-
-def cached_litellm_completion(request: Dict[str, Any], num_retries: int = 8) -> Dict[str, Any]:
-    """Cached version of litellm completion."""
-    return litellm_completion(request, num_retries=num_retries, cache={"no-cache": False, "no-store": False})
 
 # DSPy Module Runner
 def run_dspy_module(module_name: str, signature: str, prompt: Tuple[str, ...]) -> str:
@@ -95,8 +70,10 @@ def run_dspy_module(module_name: str, signature: str, prompt: Tuple[str, ...]) -
         raise ValueError(f"DSPy module {module_name} not found")
     
     # Configure DSPy to use our LLM adapter
-    provider = LLMProvider()
-    dspy.configure(lm=dspy.LM(model="llm/default", provider=provider))
+    adapter = LLMAdapter()
+    
+    # Configure DSPy
+    dspy.configure(lm=dspy.LM(model="local"))
     
     # Create module instance with signature
     module_instance = module_class(signature=signature)
@@ -195,14 +172,31 @@ def register_commands(cli: click.Group) -> None:
         except Exception as e:
             raise click.ClickException(str(e))
 
-# Monkey patch litellm and dspy.clients.lm
-import litellm
-litellm.completion = litellm_completion
-litellm.cached_completion = cached_litellm_completion
+# Configure DSPy to use our adapter by default
+adapter = LLMAdapter()
 
-import dspy.clients.lm
-dspy.clients.lm.litellm_completion = litellm_completion
-dspy.clients.lm.cached_litellm_completion = cached_litellm_completion
+# Configure LiteLLM to use our adapter
+def completion_with_adapter(**kwargs):
+    messages = kwargs.get("messages", [])
+    prompt = "\n".join(msg["content"] for msg in messages)
+    response = adapter(prompt)
+    return {
+        "choices": [{
+            "text": response,
+            "message": {
+                "content": response,
+                "role": "assistant"
+            },
+            "index": 0,
+            "finish_reason": "stop"
+        }],
+        "model": "local",
+        "object": "chat.completion",
+        "usage": {"total_tokens": 0}
+    }
 
-# Configure DSPy to use our provider by default
-dspy.configure(lm=dspy.LM(model="llm/default", provider=LLMProvider()))
+# Register our completion function with LiteLLM
+litellm.completion = completion_with_adapter
+
+# Configure DSPy
+dspy.configure(lm=dspy.LM(model="local"))

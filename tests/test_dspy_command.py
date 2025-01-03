@@ -84,3 +84,13 @@ def test_invalid_command_format(cli_runner):
     result = cli_runner.invoke(cli, ["dspy", "InvalidFormat", "test"])
     assert result.exit_code != 0
     assert "Invalid module signature format" in result.output 
+
+def test_chain_of_thought_basic_math():
+    from llm_dspy import run_dspy_module
+    
+    try:
+        result = run_dspy_module("ChainOfThought", "question -> answer", "What is 2+2?")
+        assert isinstance(result, str), "Result should be a string"
+        assert len(result) > 0, "Result should not be empty"
+    except Exception as e:
+        assert False, f"Should not raise an exception but got: {str(e)}" 

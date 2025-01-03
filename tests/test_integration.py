@@ -46,28 +46,28 @@ def test_plugin_installation(installed_plugin):
 
 def test_basic_dspy_command(installed_plugin):
     """Test running a basic DSPy command."""
-    cmd = 'llm dspy ChainOfThought\\(question\\ -\\>\\ answer\\) "What is 2+2?"'
+    cmd = 'llm dspy "ChainOfThought(question -> answer)" "What is 2+2?"'
     stdout, stderr, code = run_command(cmd)
     assert code == 0, f"Command failed: {stderr}"
     assert stdout, "Expected non-empty output"
 
 def test_complex_signature(installed_plugin):
     """Test using a more complex signature with multiple inputs/outputs."""
-    cmd = 'llm dspy ChainOfThought\\(context,\\ question\\ -\\>\\ answer,\\ confidence\\) "Here is some context" "What can you tell me?"'
+    cmd = 'llm dspy "ChainOfThought(context, question -> answer, confidence)" "Here is some context" "What can you tell me?"'
     stdout, stderr, code = run_command(cmd)
     assert code == 0, f"Command failed: {stderr}"
     assert stdout, "Expected non-empty output"
 
 def test_invalid_module(installed_plugin):
     """Test error handling for invalid module."""
-    cmd = 'llm dspy NonexistentModule\\(question\\ -\\>\\ answer\\) "test"'
+    cmd = 'llm dspy "NonexistentModule(question -> answer)" "test"'
     stdout, stderr, code = run_command(cmd)
     assert code != 0, "Expected command to fail"
     assert "NonexistentModule not found" in stderr
 
 def test_invalid_signature_format(installed_plugin):
     """Test error handling for invalid signature format."""
-    cmd = 'llm dspy InvalidFormat "test"'
+    cmd = 'llm dspy "InvalidFormat" "test"'
     stdout, stderr, code = run_command(cmd)
     assert code != 0, "Expected command to fail"
     assert "Invalid module signature format" in stderr 

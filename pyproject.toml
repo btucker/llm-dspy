@@ -17,7 +17,7 @@ test = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=llm_dspy"
+#addopts = "-v --cov=llm_dspy"
 
 [project.entry-points.llm]
 dspy = "llm_dspy"

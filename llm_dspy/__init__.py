@@ -87,7 +87,7 @@ def cached_litellm_completion(request: Dict[str, Any], num_retries: int = 8) -> 
     return litellm_completion(request, num_retries=num_retries, cache={"no-cache": False, "no-store": False})
 
 # DSPy Module Runner
-def run_dspy_module(module_name: str, signature: str, prompt: str) -> str:
+def run_dspy_module(module_name: str, signature: str, prompt: Tuple[str, ...]) -> str:
     """Run a DSPy module with the given signature and prompt."""
     try:
         module_class = getattr(dspy, module_name)
@@ -103,23 +103,29 @@ def run_dspy_module(module_name: str, signature: str, prompt: str) -> str:
     
     # Parse signature and inputs
     input_fields = [field.strip() for field in signature.split('->')[0].strip().split(',')]
-    output_fields = [field.strip() for field in signature.split('->')[1].strip().split(',')]
+    output_fields = [field.split(':')[0].strip() for field in signature.split('->')[1].strip().split(',')]
     output_field = output_fields[0]  # Use first output field
     
     # Handle input parsing
     try:
-        if len(input_fields) == 1:
-            # For single input, use the entire prompt
-            kwargs = {input_fields[0]: prompt}
+        # Convert string prompt to tuple if needed
+        if isinstance(prompt, str):
+            # If it's a string, split it on spaces while respecting quotes
+            import shlex
+            prompt = tuple(shlex.split(prompt))
+            
+        if len(prompt) < len(input_fields):
+            raise ValueError(f"Expected {len(input_fields)} inputs but got {len(prompt)}")
+        
+        # If we have more prompts than input fields, join the excess with spaces
+        if len(prompt) > len(input_fields):
+            # Take the first n-1 prompts as-is
+            processed_prompts = list(prompt[:len(input_fields)-1])
+            # Join remaining prompts for the last input field
+            processed_prompts.append(' '.join(prompt[len(input_fields)-1:]))
+            kwargs = dict(zip(input_fields, processed_prompts))
         else:
-            # For multiple inputs, split by quotes and spaces
-            # Click has already handled escaping and quoting for us
-            parts = shlex.split(prompt)
-            
-            if len(parts) != len(input_fields):
-                raise ValueError(f"Expected {len(input_fields)} inputs but got {len(parts)}")
-            
-            kwargs = dict(zip(input_fields, parts))
+            kwargs = dict(zip(input_fields, prompt))
     except Exception as e:
         raise ValueError(f"Failed to parse inputs: {str(e)}")
     
@@ -175,13 +181,13 @@ def register_commands(cli: click.Group) -> None:
         For example: 'ChainOfThought(question -> answer)'
         
         INPUTS are the input values to process. For single input signatures, all inputs
-        are joined together. For multiple input signatures, the number of inputs must
-        match the number of input fields in the signature.
+        are joined together. For multiple input signatures, each input should be properly
+        quoted if it contains spaces.
         """
         try:
             module_name, signature = module_signature
-            # Let run_dspy_module handle the input parsing based on signature
-            result = run_dspy_module(module_name, signature, " ".join(inputs))
+            # Join inputs with spaces to preserve the original string
+            result = run_dspy_module(module_name, signature, inputs)
             click.echo(result)
         except Exception as e:
             raise click.ClickException(str(e))

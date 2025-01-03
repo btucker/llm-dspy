@@ -94,3 +94,23 @@ def test_chain_of_thought_basic_math():
         assert len(result) > 0, "Result should not be empty"
     except Exception as e:
         assert False, f"Should not raise an exception but got: {str(e)}" 
+
+def test_run_dspy_module_with_quoted_spaces(mocker):
+    """Test that quoted arguments containing spaces are handled correctly."""
+    # Mock the DSPy module and its forward method
+    mock_module = mocker.MagicMock()
+    mock_module.forward.return_value = mocker.MagicMock(answer="Test response")
+    mocker.patch('dspy.ChainOfThought', return_value=mock_module)
+    
+    # Run the module with quoted arguments
+    run_dspy_module(
+        "ChainOfThought",
+        "question, context -> answer",
+        '"What color is it?" "The sky is blue"'
+    )
+    
+    # Verify the module was called with correctly parsed arguments
+    mock_module.forward.assert_called_once_with(
+        question="What color is it?",
+        context="The sky is blue"
+    ) 

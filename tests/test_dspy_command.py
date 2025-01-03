@@ -5,6 +5,12 @@ import click.testing
 from llm_dspy import run_dspy_module
 from dspy.primitives.prediction import Prediction
 
+@pytest.fixture(autouse=True)
+def mock_dspy_configure():
+    """Mock DSPy configure to prevent OpenAI initialization"""
+    with patch('dspy.configure') as mock:
+        yield mock
+
 @pytest.fixture
 def mock_dspy_module():
     """Mock DSPy module"""

@@ -4,12 +4,10 @@ import re
 import click
 import sys
 import litellm
-from typing import List, Tuple, Dict, Any, Optional
-from dspy.primitives.prediction import Prediction
+from typing import List, Tuple, Dict, Any
 
 __all__ = ['run_dspy_module', 'register_commands']
 
-# Core LLM Adapter
 class LLMAdapter:
     """Adapter to convert LLM responses into DSPy-compatible format."""
     def __init__(self):
@@ -25,55 +23,13 @@ class LLMAdapter:
                 if not models:
                     raise RuntimeError("No LLM models available")
                 self.llm = models[0]
-        
-        self.kwargs = {
-            "temperature": 0.7,  # Default temperature
-            "max_tokens": 1000,  # Default max tokens
-        }
 
-    def __call__(self, prompt: str, **kwargs) -> str:
-        response = self.llm.prompt(prompt)
-        # Force the response to complete and get the text
-        for chunk in response:
-            pass
-        return response.text_or_raise()
-
-    def basic_create(self, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Basic completion creation that follows OpenAI's format."""
-        if isinstance(prompt, str):
-            messages = [{"role": "user", "content": prompt}]
-        else:
-            messages = prompt.get("messages", [])
-        
-        # Extract the actual prompt from the messages
-        prompt_text = "\n".join(msg["content"] for msg in messages)
-        response = self.__call__(prompt_text, **kwargs)
-        
-        return {
-            "choices": [{
-                "text": response,
-                "message": {
-                    "content": response,
-                    "role": "assistant"
-                }
-            }],
-            "model": "local",  # Use a generic model name
-            "usage": {"total_tokens": 0}  # We don't track token usage
-        }
-
-# DSPy Module Runner
 def run_dspy_module(module_name: str, signature: str, prompt: Tuple[str, ...]) -> str:
     """Run a DSPy module with the given signature and prompt."""
     try:
         module_class = getattr(dspy, module_name)
     except AttributeError:
         raise ValueError(f"DSPy module {module_name} not found")
-    
-    # Configure DSPy to use our LLM adapter
-    adapter = LLMAdapter()
-    
-    # Configure DSPy
-    dspy.configure(lm=dspy.LM(model="local"))
     
     # Create module instance with signature
     module_instance = module_class(signature=signature)
@@ -128,7 +84,6 @@ def run_dspy_module(module_name: str, signature: str, prompt: Tuple[str, ...]) -
     except AttributeError:
         raise ValueError(f"Response does not have field '{output_field}'")
 
-# CLI Integration
 @llm.hookimpl
 def register_commands(cli: click.Group) -> None:
     """Register the DSPy command with LLM."""
@@ -175,28 +130,30 @@ def register_commands(cli: click.Group) -> None:
 # Configure DSPy to use our adapter by default
 adapter = LLMAdapter()
 
-# Configure LiteLLM to use our adapter
-def completion_with_adapter(**kwargs):
-    messages = kwargs.get("messages", [])
-    prompt = "\n".join(msg["content"] for msg in messages)
-    response = adapter(prompt)
-    return {
-        "choices": [{
-            "text": response,
-            "message": {
-                "content": response,
-                "role": "assistant"
-            },
-            "index": 0,
-            "finish_reason": "stop"
-        }],
-        "model": "local",
-        "object": "chat.completion",
-        "usage": {"total_tokens": 0}
-    }
-
 # Register our completion function with LiteLLM
+def completion_with_adapter(model: str, messages: List[Dict[str, str]], **kwargs):
+    prompt = "\n".join(msg["content"] for msg in messages)
+    response = adapter.llm.prompt(prompt)
+    for chunk in response:
+        pass
+    response_text = response.text_or_raise()
+    return litellm.ModelResponse(
+        id="llm-" + str(hash(response_text))[:8],
+        choices=[{
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+                "content": response_text,
+                "role": "assistant"
+            }
+        }],
+        model=model,
+        usage={"total_tokens": 0}
+    )
+
+# Register our provider with LiteLLM
+litellm.provider_list.append("llm")
 litellm.completion = completion_with_adapter
 
 # Configure DSPy
-dspy.configure(lm=dspy.LM(model="local"))
+dspy.configure(lm=dspy.LM(model="llm"))

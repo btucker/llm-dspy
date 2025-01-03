@@ -3,13 +3,14 @@ from unittest.mock import MagicMock, patch
 import dspy
 import click.testing
 from llm_dspy import run_dspy_module
+from dspy.primitives.prediction import Prediction
 
 @pytest.fixture
 def mock_dspy_module():
     """Mock DSPy module"""
     mock_module = MagicMock()
     mock_instance = MagicMock()
-    mock_instance.forward.return_value = "Here's a step by step solution..."
+    mock_instance.forward.return_value = Prediction(answer="Here's a step by step solution...")
     mock_module.return_value = mock_instance
     
     with patch('dspy.ChainOfThought', mock_module):

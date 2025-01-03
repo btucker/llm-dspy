@@ -2,7 +2,27 @@ import llm
 import dspy
 import re
 import click
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict, Any
+from dspy.clients.base_lm import BaseLM
+
+class LLMLanguageModel(BaseLM):
+    """A DSPy language model that delegates to LLM."""
+    def __init__(self, temperature: float = 0.0, max_tokens: int = 1000, cache: bool = True, **kwargs):
+        # Use the default model from LLM
+        model = llm.get_model()
+        super().__init__(model=model, model_type='chat', temperature=temperature, max_tokens=max_tokens, cache=cache, **kwargs)
+
+    def __call__(self, prompt: Optional[str] = None, messages: Optional[List[Dict[str, str]]] = None, **kwargs) -> str:
+        """Make a request to the language model."""
+        if messages:
+            # Convert DSPy message format to LLM format
+            prompt = "\n".join(f"{msg['role']}: {msg['content']}" for msg in messages)
+        
+        if not prompt:
+            raise ValueError("Either prompt or messages must be provided")
+
+        response = self.model.prompt(prompt)
+        return str(response)
 
 def run_dspy_module(module_name: str, signature: str, prompt: str) -> str:
     """Run a DSPy module with the given signature and prompt."""
@@ -10,6 +30,9 @@ def run_dspy_module(module_name: str, signature: str, prompt: str) -> str:
         module_class = getattr(dspy, module_name)
     except AttributeError:
         raise ValueError(f"DSPy module {module_name} not found")
+    
+    # Set up DSPy to use LLM
+    dspy.settings.configure(lm=LLMLanguageModel())
     
     # Create module instance with signature - let DSPy handle signature parsing
     module_instance = module_class(signature=signature)

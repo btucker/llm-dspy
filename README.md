@@ -15,18 +15,15 @@ The plugin adds a new `dspy` command that can be used to run any DSPy module wit
 ```bash
 # Basic usage
 llm dspy "ChainOfThought(question -> answer)" "What is 15% of 85?"
+llm dspy "ProgramOfThought(question -> answer:int)" "How many letter Rs are in the word Strawberry"
 
 # Chain of thought with multiple inputs/outputs
 llm dspy "ChainOfThought(context, question -> answer, confidence)" "Here's some context..." "What can you tell me?"
-
-# Using other DSPy modules
-llm dspy "ReAct(task -> solution)" "Write a function to find prime numbers up to n"
-llm dspy "ProgramOfThought(problem -> code, explanation)" "Implement a binary search tree"
 ```
 
 The command format is:
 ```
-llm dspy "ModuleName(input_fields -> output_fields)" "Your prompt here"
+llm dspy "ModuleName(input_fields -> output_fields : type)" "Your prompt here"
 ```
 
 ## Supported DSPy Modules
@@ -34,8 +31,6 @@ llm dspy "ModuleName(input_fields -> output_fields)" "Your prompt here"
 The plugin supports any DSPy module that can be initialized with a signature and called with a prompt string. Some commonly used modules include:
 
 - ChainOfThought
-- ChainOfProgram
-- ReAct
 - ProgramOfThought
 
 ## Error Handling

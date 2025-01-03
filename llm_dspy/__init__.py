@@ -2,7 +2,7 @@ import llm
 import dspy
 import re
 import click
-import shlex
+import sys
 from typing import List, Tuple, Dict, Any, Optional
 from dspy.clients.provider import Provider
 from dspy.primitives.prediction import Prediction
@@ -174,7 +174,8 @@ def register_commands(cli: click.Group) -> None:
     @cli.command()
     @click.argument("module_signature", type=ModuleSignature())
     @click.argument("inputs", nargs=-1, required=True)
-    def dspy(module_signature: Tuple[str, str], inputs: Tuple[str, ...]) -> None:
+    @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+    def dspy(module_signature: Tuple[str, str], inputs: Tuple[str, ...], verbose: bool) -> None:
         """Run a DSPy module with a given signature and inputs.
         
         MODULE_SIGNATURE should be in the format: 'ModuleName(inputs -> outputs)'
@@ -189,6 +190,8 @@ def register_commands(cli: click.Group) -> None:
             # Join inputs with spaces to preserve the original string
             result = run_dspy_module(module_name, signature, inputs)
             click.echo(result)
+            if verbose:
+                sys.modules['dspy'].inspect_history()
         except Exception as e:
             raise click.ClickException(str(e))
 

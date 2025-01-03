@@ -1,4 +1,6 @@
 name: Tests
+env:
+  OPENAI_API_KEY: xxxxxxx
 
 on:
   push:

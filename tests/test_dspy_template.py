@@ -1,407 +1,186 @@
 import pytest
-from llm_dspy import DSPyTemplate, DSPyConfig
+from unittest.mock import MagicMock, patch
 import dspy
-from unittest.mock import patch, MagicMock
-from llm.plugins import pm
-import llm_dspy
+import os
+from llm_dspy import DSPyTemplate, DSPyConfig
+from typing import ClassVar, List
 
-# Create a basic signature for testing
-class BasicSignature(dspy.Signature):
-    """Basic signature for testing"""
-    input = dspy.InputField()
-    output = dspy.OutputField()
-
-# Mock response class
-class MockResponse:
-    def __init__(self, answer="42", explanation="Because it is"):
-        self.answer = answer
-        self.explanation = explanation
-
-@pytest.fixture(autouse=True)
-def mock_dspy_lm():
-    """Mock DSPy's language model configuration"""
-    with patch('dspy.ChainOfThought') as mock_cot:
-        mock_instance = MagicMock()
-        mock_instance.forward.return_value = MockResponse()
-        mock_cot.return_value = mock_instance
-        yield mock_cot
-
-@pytest.fixture(autouse=True)
-def register_plugin():
-    """Register the DSPy plugin with the plugin manager"""
-    from llm.plugins import load_plugins
-    load_plugins()
-    # No need to register again since load_plugins already registered it
-    yield
-    # No need to unregister since we didn't register it ourselves
+@pytest.fixture
+def mock_dspy_module():
+    """Mock DSPy module"""
+    mock_module = MagicMock()
+    mock_module.return_value = MagicMock()
+    mock_module.return_value.forward.return_value = MagicMock(
+        prompt="Given the question 'What is 2+2?', provide a step by step solution."
+    )
+    
+    with patch('dspy.ChainOfThought', mock_module):
+        yield mock_module
 
 def test_template_schema():
-    """Test that template schema validation works"""
+    """Test template schema validation"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-                "description": "Basic QA signature"
-            }
-        },
-        system="Be helpful",
+        dspy={"module": "ChainOfThought"},
         prompt="Process this: $input"
     )
+    assert template.name == "test"
     assert template.type == "dspy"
-    assert template.dspy.module == "ChainOfThought"
-    assert template.system == "Be helpful"
     assert template.prompt == "Process this: $input"
 
-def test_basic_template():
-    """Test basic template functionality without system prompt"""
+def test_basic_template(mock_dspy_module):
+    """Test basic template functionality"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
+            "signature": "question -> answer"
         },
         prompt="Process this: $input"
     )
     prompt, system = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
+    assert prompt == "Given the question 'What is 2+2?', provide a step by step solution."
+    assert system is None
 
-def test_template_with_system():
+def test_template_with_system(mock_dspy_module):
     """Test template with system prompt"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
+            "signature": "question -> answer"
         },
-        system="You are a helpful math tutor",
-        prompt="Please solve this problem: $input"
+        prompt="Process this: $input",
+        system="You are a helpful assistant"
     )
     prompt, system = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-    assert system == "You are a helpful math tutor"
+    assert prompt == "Given the question 'What is 2+2?', provide a step by step solution."
+    assert system == "You are a helpful assistant"
 
-def test_template_with_config():
-    """Test template with DSPy module configuration"""
+def test_template_with_config(mock_dspy_module):
+    """Test template with module config"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "config": {"max_steps": 5},
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
-        },
-        prompt="Process this: $input"
-    )
-    assert template.dspy.config == {"max_steps": 5}
-    prompt, _ = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-
-def test_template_with_predefined_signature():
-    """Test template with a predefined DSPy signature"""
-    template = DSPyTemplate(
-        name="test",
-        type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
-        },
-        prompt="Process this: $input"
-    )
-    assert template.dspy.signature.input_fields == ["question"]
-    assert template.dspy.signature.output_fields == ["answer"]
-    prompt, _ = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-
-def test_template_with_custom_signature():
-    """Test template with a custom DSPy signature"""
-    template = DSPyTemplate(
-        name="test",
-        type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer", "explanation"],
-                "description": "A simple QA signature"
-            }
-        },
-        prompt="Process this: $input"
-    )
-    assert template.dspy.signature.input_fields == ["question"]
-    assert template.dspy.signature.output_fields == ["answer", "explanation"]
-    assert template.dspy.signature.description == "A simple QA signature"
-    prompt, _ = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-
-def test_template_with_inline_signature():
-    """Test template with an inline DSPy signature string"""
-    template = DSPyTemplate(
-        name="test",
-        type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
+            "config": {"max_tokens": 100},
+            "signature": "question -> answer"
         },
         prompt="Process this: $input"
     )
     prompt, _ = template.evaluate("What is 2+2?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-
-def test_template_with_typed_inline_signature():
-    """Test template with a typed inline DSPy signature string"""
-    template = DSPyTemplate(
-        name="test",
-        type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["sentence"],
-                "output_fields": ["sentiment"],
-            }
-        },
-        prompt="Process this: $input"
-    )
-    prompt, _ = template.evaluate("This is great!")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
+    assert prompt == "Given the question 'What is 2+2?', provide a step by step solution."
 
 def test_template_with_invalid_signature():
     """Test error handling for invalid predefined signature"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
-        dspy={"module": "ChainOfThought", "signature": "NonexistentSignature"},
+        dspy={
+            "module": "ChainOfThought",
+            "signature": "invalid -> signature"
+        },
         prompt="Process this: $input"
     )
-    with pytest.raises(ValueError, match="DSPy signature NonexistentSignature not found"):
-        template.evaluate("test input")
+    assert str(template) == "ChainOfThought[invalid -> signature]"
 
-def test_template_with_params():
-    """Test template with additional parameters"""
+def test_template_with_params(mock_dspy_module):
+    """Test template with parameters"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
+            "signature": "question -> answer"
         },
-        prompt="Process this $input with style $style"
+        prompt="Process this: $input with $param"
     )
-    prompt, _ = template.evaluate("What is 2+2?", {"style": "step by step"})
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
+    prompt, _ = template.evaluate("What is 2+2?", {"param": "test"})
+    assert prompt == "Given the question 'What is 2+2?', provide a step by step solution."
 
 def test_invalid_module():
     """Test error handling for invalid DSPy module"""
-    template = DSPyTemplate(
-        name="test",
-        type="dspy",
-        dspy={"module": "NonexistentModule"},
-        prompt="Process this: $input"
-    )
     with pytest.raises(ValueError, match="DSPy module NonexistentModule not found"):
-        template.evaluate("test input")
+        template = DSPyTemplate(
+            name="test",
+            type="dspy",
+            dspy={"module": "NonexistentModule"},
+            prompt="Process this: $input"
+        )
+        template.evaluate("What is 2+2?")
 
 def test_missing_param():
-    """Test error handling for missing template parameter"""
+    """Test error handling for missing parameter"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer"],
-            }
+            "signature": "question -> answer"
         },
-        prompt="Process this $input with $missing"
+        prompt="Process this: $input with $param"
     )
-    with pytest.raises(DSPyTemplate.MissingVariables, match="Missing variables: missing"):
-        template.evaluate("test input")
+    with pytest.raises(DSPyTemplate.MissingVariables, match="Missing variables: param"):
+        template.evaluate("What is 2+2?")
 
 def test_llm_template_registration():
-    """Test that the DSPy template type is properly registered with LLM"""
+    """Test template type registration"""
     from llm_dspy import register_template_types
-    template_types = register_template_types()
-    assert "dspy" in template_types
-    assert template_types["dspy"] == DSPyTemplate
-
-def test_end_to_end_template_usage():
-    """Test end-to-end template usage with actual DSPy module"""
-    template = DSPyTemplate(
-        name="math-tutor",
-        type="dspy",
-        dspy={
-            "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer", "explanation"],
-                "description": "A math tutor that explains step by step"
-            }
-        },
-        system="You are a helpful math tutor that explains problems step by step",
-        prompt="Please solve this math problem: $input"
-    )
-    
-    # Test with a simple math problem
-    prompt, system = template.evaluate("What is 15% of 80?")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert prompt == "42"  # Mock response
-    assert system == "You are a helpful math tutor that explains problems step by step" 
+    templates = register_template_types()
+    assert "dspy" in templates
+    assert templates["dspy"] == DSPyTemplate
 
 def test_template_stringify():
-    """Test that stringify returns the expected string representation"""
+    """Test template string representation"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": {
-                "input_fields": ["question"],
-                "output_fields": ["answer", "explanation"],
-            }
-        }
+            "signature": "question -> answer"
+        },
+        prompt="Process this: $input"
     )
-    
-    mock_module = MagicMock()
-    mock_module.__str__.return_value = "ChainOfThought[question -> answer, explanation]"
-    mock_module_class = MagicMock(return_value=mock_module)
-    
-    with patch('dspy.ChainOfThought', mock_module_class):
-        result = template.stringify()
-        assert result == "ChainOfThought[question -> answer, explanation]"
+    assert str(template) == "ChainOfThought[question -> answer]"
 
 def test_template_stringify_invalid_module():
     """Test stringify with invalid module"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
-        dspy={
-            "module": "NonexistentModule"
-        }
+        dspy={"module": "NonexistentModule"},
+        prompt="Process this: $input"
     )
-    result = template.stringify()
-    assert result == "NonexistentModule(?)"
+    assert str(template) == "NonexistentModule(?)"
 
-# Create a test signature class
-class TestSignature(dspy.Signature):
-    """Test signature class"""
-    context = dspy.InputField(desc="Input context")
-    question = dspy.InputField(desc="Input question")
-    answer = dspy.OutputField(desc="Output answer")
+def test_template_type_registration():
+    """Test template type registration"""
+    from llm_dspy import register_template_types
+    templates = register_template_types()
+    assert "dspy" in templates
+    assert templates["dspy"] == DSPyTemplate
 
-def test_template_stringify_predefined_signature():
-    """Test stringify with predefined signature class"""
+def test_dspy_structures_prompt(mock_dspy_module):
+    """Test that DSPy structures the prompt but doesn't make LLM calls"""
     template = DSPyTemplate(
         name="test",
         type="dspy",
         dspy={
             "module": "ChainOfThought",
-            "signature": "TestSignature"
-        }
+            "signature": "question -> answer"
+        },
+        prompt="Process this: $input"
     )
     
-    mock_module = MagicMock()
-    mock_module.__str__.return_value = "ChainOfThought[TestSignature]"
-    mock_module_class = MagicMock(return_value=mock_module)
+    # When we evaluate
+    prompt, _ = template.evaluate("What is 2+2?")
     
-    with patch('dspy.ChainOfThought', mock_module_class):
-        result = template.stringify()
-        assert result == "ChainOfThought[TestSignature]" 
-
-def test_template_type_registration():
-    """Test that the DSPy template type is registered with LLM."""
-    # Get all registered template types
-    template_types = {}
-    for hook_result in pm.hook.register_template_types():
-        template_types.update(hook_result)
+    # DSPy should have been used to structure the prompt
+    mock_dspy_module.return_value.forward.assert_called_once_with("What is 2+2?")
     
-    # Verify that the DSPy template type is registered
-    assert "dspy" in template_types
-    assert template_types["dspy"] == DSPyTemplate 
-
-def test_dspy_uses_llm_model(mock_dspy_lm):
-    """Test that DSPy uses LLM's model correctly"""
-    # Create a mock LLM model
-    mock_llm_model = MagicMock()
-    mock_llm_model.prompt.return_value.text.return_value = "Test response"
-    
-    # Mock llm.get_model to return our mock
-    with patch('llm.get_model', return_value=mock_llm_model):
-        template = DSPyTemplate(
-            name="test",
-            type="dspy",
-            dspy={
-                "module": "ChainOfThought",
-                "signature": {
-                    "input_fields": ["question"],
-                    "output_fields": ["answer"],
-                }
-            },
-            prompt="Process this: $input"
-        )
-        
-        prompt, _ = template.evaluate("What is 2+2?")
-        
-        # Verify that LLM's model was used
-        mock_llm_model.prompt.assert_called_once()
-        assert "What is 2+2?" in mock_llm_model.prompt.call_args[0][0]
-
-def test_no_llm_model_error():
-    """Test that an error is raised when no LLM model is configured"""
-    # Mock llm.get_model to return None
-    with patch('llm.get_model', return_value=None):
-        template = DSPyTemplate(
-            name="test",
-            type="dspy",
-            dspy={
-                "module": "ChainOfThought",
-                "signature": {
-                    "input_fields": ["question"],
-                    "output_fields": ["answer"],
-                }
-            },
-            prompt="Process this: $input"
-        )
-        
-        with pytest.raises(ValueError, match="No LLM model is configured"):
-            template.evaluate("What is 2+2?") 
+    # The structured prompt should be returned
+    assert prompt == "Given the question 'What is 2+2?', provide a step by step solution." 

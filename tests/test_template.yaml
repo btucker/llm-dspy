@@ -1,5 +1,0 @@
-type: dspy
-name: cot
-dspy:
-  module: ChainOfThought
-  signature: "sentence -> sentiment: positive, negative, neutral"

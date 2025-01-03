@@ -1,7 +1,7 @@
 [project]
 name = "llm-dspy"
 version = "0.1"
-description = "Plugin for LLM adding DSPy template support"
+description = "Plugin for LLM adding DSPy command support"
 dependencies = [
     "llm",
     "dspy-ai"
@@ -10,7 +10,8 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",
-    "pytest-cov>=4.0"
+    "pytest-cov>=4.0",
+    "click>=8.0"
 ]
 
 [tool.pytest.ini_options]

@@ -4,6 +4,7 @@ import dspy
 import click.testing
 from llm_dspy import run_dspy_module
 from dspy.primitives.prediction import Prediction
+import llm
 
 @pytest.fixture(autouse=True)
 def mock_dspy_configure():
@@ -22,100 +23,174 @@ def mock_dspy_module():
     with patch('dspy.ChainOfThought', mock_module):
         yield mock_module
 
-def test_run_dspy_module(mock_dspy_module):
-    """Test running a DSPy module"""
-    result = run_dspy_module("ChainOfThought", "question -> answer", "What is 2+2?")
-    assert result == "Here's a step by step solution..."
-    mock_dspy_module.assert_called_once_with(signature="question -> answer")
-    mock_dspy_module.return_value.forward.assert_called_once_with(question="What is 2+2?")
-
-def test_invalid_module():
-    """Test error handling for invalid DSPy module"""
-    with pytest.raises(ValueError, match="DSPy module NonexistentModule not found"):
-        run_dspy_module("NonexistentModule", "question -> answer", "test")
-
 @pytest.fixture
 def cli_runner():
     """Create a Click CLI test runner"""
     return click.testing.CliRunner()
 
-def test_dspy_command(mock_dspy_module, cli_runner, monkeypatch):
-    """Test the dspy command"""
-    # Create a mock CLI context
+@pytest.fixture
+def cli():
+    """Create a CLI with our command registered"""
     @click.group()
     def cli():
         pass
     
-    # Import our register_commands and run it
     from llm_dspy import register_commands
     register_commands(cli)
-    
-    # Run the command
-    result = cli_runner.invoke(cli, ["dspy", "ChainOfThought(question -> answer)", "What is 2+2?"])
-    assert result.exit_code == 0
-    assert result.output.strip() == "Here's a step by step solution..."
+    return cli
 
-def test_dspy_command_multiple_words(mock_dspy_module, cli_runner):
-    """Test the dspy command with multiple word prompt"""
-    # Create a mock CLI context
-    @click.group()
-    def cli():
-        pass
-    
-    # Import our register_commands and run it
-    from llm_dspy import register_commands
-    register_commands(cli)
-    
-    # Run the command
+def test_basic_question(mock_dspy_module, cli_runner, cli):
+    """Test basic question answering."""
     result = cli_runner.invoke(cli, [
         "dspy",
-        "ChainOfThought(question -> answer)",
-        "Why", "is", "the", "sky", "blue?"
+        "ChainOfThought",
+        "question -> answer",
+        "--question", "What is 2+2?"
     ])
+    
     assert result.exit_code == 0
-    assert result.output.strip() == "Here's a step by step solution..."
+    assert "Here's a step by step solution..." in result.output
 
-def test_invalid_command_format(cli_runner):
-    """Test invalid command format handling"""
-    # Create a mock CLI context
-    @click.group()
-    def cli():
-        pass
+def test_multiple_inputs(mock_dspy_module, cli_runner, cli):
+    """Test handling multiple inputs."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought",
+        "question, style -> answer",
+        "--question", "What is the meaning of life?",
+        "--style", "philosophical"
+    ])
     
-    # Import our register_commands and run it
-    from llm_dspy import register_commands
-    register_commands(cli)
-    
-    # Run the command
-    result = cli_runner.invoke(cli, ["dspy", "InvalidFormat", "test"])
+    assert result.exit_code == 0
+    assert "Here's a step by step solution..." in result.output
+    mock_dspy_module.return_value.forward.assert_called_once_with(
+        question="What is the meaning of life?",
+        style="philosophical"
+    )
+
+def test_invalid_module(cli_runner, cli):
+    """Test error handling for invalid DSPy module"""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "NonexistentModule",
+        "question -> answer",
+        "--question", "test"
+    ])
     assert result.exit_code != 0
-    assert "Invalid module signature format" in result.output 
+    assert "DSPy module NonexistentModule not found" in result.output
 
-def test_chain_of_thought_basic_math(mock_dspy_module):
-    """Test basic math with chain of thought."""
-    result = run_dspy_module("ChainOfThought", "question -> answer", "What is 2+2?")
-    assert isinstance(result, str), "Result should be a string"
-    assert len(result) > 0, "Result should not be empty"
-    assert result == "Here's a step by step solution..."
-    mock_dspy_module.assert_called_once_with(signature="question -> answer")
-    mock_dspy_module.return_value.forward.assert_called_once_with(question="What is 2+2?")
+def test_invalid_command_format(cli_runner, cli):
+    """Test invalid command format handling"""
+    result = cli_runner.invoke(cli, ["dspy", "InvalidFormat"])
+    assert result.exit_code != 0
+    assert "Missing module signature" in result.output
 
-def test_run_dspy_module_with_quoted_spaces(mocker):
-    """Test that quoted arguments containing spaces are handled correctly."""
-    # Mock the DSPy module and its forward method
+def test_rag_with_llm_embeddings(mocker, cli_runner, cli):
+    """Test RAG functionality with LLM embeddings."""
+    # Mock the LLM embeddings functionality
+    mock_collection = mocker.MagicMock()
+    mock_collection.search.return_value = ["This is some relevant context from the database"]
+    
+    # Mock the collection class
+    mock_collection_class = mocker.MagicMock(return_value=mock_collection)
+    mocker.patch('llm.Collection', mock_collection_class)
+    
+    # Mock the DSPy module
     mock_module = mocker.MagicMock()
-    mock_module.forward.return_value = mocker.MagicMock(answer="Test response")
+    mock_module.forward.return_value = mocker.MagicMock(answer="Answer based on context")
     mocker.patch('dspy.ChainOfThought', return_value=mock_module)
     
-    # Run the module with quoted arguments
-    run_dspy_module(
+    # Run the command with context and question
+    result = cli_runner.invoke(cli, [
+        "dspy",
         "ChainOfThought",
-        "question, context -> answer",
-        '"What color is it?" "The sky is blue"'
-    )
+        "context, question -> answer",
+        "--context", "my_collection",
+        "--question", "What is mentioned in the documents?"
+    ])
     
-    # Verify the module was called with correctly parsed arguments
+    assert result.exit_code == 0
+    assert "Answer based on context" in result.output
+    
+    # Verify LLM embeddings were used
+    mock_collection_class.assert_called_once_with("my_collection")
+    mock_collection.search.assert_called_once_with("What is mentioned in the documents?")
+    
+    # Verify the module was called with the retrieved context
     mock_module.forward.assert_called_once_with(
-        question="What color is it?",
-        context="The sky is blue"
-    ) 
+        context="This is some relevant context from the database",
+        question="What is mentioned in the documents?"
+    )
+
+def test_signature_based_options(mocker, cli_runner, cli):
+    """Test that different signatures generate appropriate options."""
+    # Mock the LLM embeddings functionality
+    mock_collection = mocker.MagicMock()
+    mock_collection.search.return_value = ["This is some relevant context from the database"]
+    
+    # Mock the collection class
+    mock_collection_class = mocker.MagicMock(return_value=mock_collection)
+    mocker.patch('llm.Collection', mock_collection_class)
+    
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    mock_module.forward.return_value = mocker.MagicMock(answer="Answer based on context")
+    mocker.patch('dspy.ChainOfThought', return_value=mock_module)
+    
+    # Test with different signatures
+    test_cases = [
+        # Basic RAG case
+        {
+            'cmd': [
+                "dspy",
+                "ChainOfThought",
+                "context, query -> answer",
+                "--context", "my_collection",
+                "--query", "What is mentioned?"
+            ],
+            'expected_kwargs': {
+                'context': "This is some relevant context from the database",
+                'query': "What is mentioned?"
+            }
+        },
+        # Multiple inputs case
+        {
+            'cmd': [
+                "dspy",
+                "ChainOfThought",
+                "background, prompt, style -> answer",
+                "--background", "my_collection",
+                "--prompt", "Analyze this",
+                "--style", "concise"
+            ],
+            'expected_kwargs': {
+                'background': "This is some relevant context from the database",
+                'prompt': "Analyze this",
+                'style': "concise"
+            }
+        }
+    ]
+
+    for i, case in enumerate(test_cases):
+        print(f"\nRunning test case {i + 1}:")
+        print(f"Command: {' '.join(case['cmd'])}")
+        print(f"Expected kwargs: {case['expected_kwargs']}")
+        
+        result = cli_runner.invoke(cli, case['cmd'])
+        print(f"Exit code: {result.exit_code}")
+        print(f"Output:\n{result.output}")
+        if result.exception:
+            print(f"Exception: {result.exception}")
+        
+        assert result.exit_code == 0
+        assert "Answer based on context" in result.output
+        
+        # If this input has a collection field, verify search was performed
+        collection_fields = ['context', 'background']  # Fields that trigger RAG
+        for field in collection_fields:
+            if field in case['expected_kwargs']:
+                mock_collection_class.assert_called_with(case['cmd'][case['cmd'].index(f'--{field}') + 1])
+                mock_collection.search.assert_called()
+        
+        # Verify the module was called with expected kwargs
+        mock_module.forward.assert_called_with(**case['expected_kwargs']) 

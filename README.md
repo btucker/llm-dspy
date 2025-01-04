@@ -36,9 +36,68 @@ llm dspy [options] "ModuleName(input_fields -> output_fields : type)" "Your prom
 
 ### Input Format
 
-- For single input signatures, all arguments after the signature are joined together
-- For multiple input signatures, each input should be properly quoted if it contains spaces
-- Output fields can optionally specify types (e.g., `answer:int`)
+Each input field in the signature becomes a command-line option. For example, if your signature is `ChainOfThought(context, question -> answer)`, you'll get `--context` and `--question` options.
+
+Special field names trigger RAG functionality:
+- `context`
+- `background`
+- `documents`
+- `knowledge`
+
+When these fields are present in the signature, their corresponding options expect an LLM collection name. The plugin will:
+1. Use the collection to search for relevant content
+2. Use another field's value as the search query (looking for `question`, `query`, or `prompt` fields)
+3. If no query field is found, use all other input values combined
+
+Examples:
+```bash
+# Basic RAG with context and question
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context my_collection \
+  --question "What insights can you find?"
+
+# Using background with a prompt
+llm dspy "ChainOfThought(background, prompt, style -> response)" \
+  --background knowledge_base \
+  --prompt "Analyze this" \
+  --style "concise"
+
+# Multiple RAG sources
+llm dspy "ChainOfThought(context, documents, query -> answer)" \
+  --context primary_source \
+  --documents secondary_source \
+  --query "What are the differences?"
+```
+
+The plugin automatically detects which fields should trigger RAG functionality based on their names in the signature.
+
+### RAG Support
+
+The plugin supports Retrieval-Augmented Generation (RAG) using LLM's embeddings functionality. When using RAG, provide:
+- `--context`: Name of the LLM collection to search
+- `--question`: Question to use for searching the collection
+
+Example:
+```bash
+# First, create and populate an LLM collection
+llm embed my_collection document1.txt document2.txt
+
+# Then use it with DSPy
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context my_collection \
+  --question "What insights can you find in the documents?"
+
+# You can also use it with other inputs
+llm dspy "ChainOfThought(context, question, style -> answer)" \
+  --context my_collection \
+  --question "What are the key points?" \
+  "Make it concise"
+```
+
+The plugin will:
+1. Use the collection to search for relevant context using the question
+2. Pass both the retrieved context and your question to the DSPy module
+3. Any additional command-line arguments will be used for other input fields in the signature
 
 ## Supported DSPy Modules
 

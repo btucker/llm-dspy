@@ -1,4 +1,3 @@
-
 class MockResponse:
     def __init__(self, text):
         self.text = text
@@ -12,3 +11,6 @@ class MockModel:
 
 def get_model():
     return MockModel()
+
+def get_models():
+    return [MockModel()]

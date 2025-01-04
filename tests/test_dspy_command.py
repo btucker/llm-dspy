@@ -91,15 +91,14 @@ def test_invalid_command_format(cli_runner):
     assert result.exit_code != 0
     assert "Invalid module signature format" in result.output 
 
-def test_chain_of_thought_basic_math():
-    from llm_dspy import run_dspy_module
-    
-    try:
-        result = run_dspy_module("ChainOfThought", "question -> answer", "What is 2+2?")
-        assert isinstance(result, str), "Result should be a string"
-        assert len(result) > 0, "Result should not be empty"
-    except Exception as e:
-        assert False, f"Should not raise an exception but got: {str(e)}" 
+def test_chain_of_thought_basic_math(mock_dspy_module):
+    """Test basic math with chain of thought."""
+    result = run_dspy_module("ChainOfThought", "question -> answer", "What is 2+2?")
+    assert isinstance(result, str), "Result should be a string"
+    assert len(result) > 0, "Result should not be empty"
+    assert result == "Here's a step by step solution..."
+    mock_dspy_module.assert_called_once_with(signature="question -> answer")
+    mock_dspy_module.return_value.forward.assert_called_once_with(question="What is 2+2?")
 
 def test_run_dspy_module_with_quoted_spaces(mocker):
     """Test that quoted arguments containing spaces are handled correctly."""

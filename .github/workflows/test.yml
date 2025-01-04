@@ -30,6 +30,3 @@ jobs:
       run: |
         pytest tests/test_dspy_command.py -v
         
-    - name: Run integration tests (will be skipped)
-      run: |
-        pytest tests/test_integration.py -v

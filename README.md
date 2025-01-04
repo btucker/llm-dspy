@@ -99,6 +99,43 @@ The plugin will:
 2. Pass both the retrieved context and your question to the DSPy module
 3. Any additional command-line arguments will be used for other input fields in the signature
 
+### Enhanced RAG Support
+
+The plugin now includes advanced Retrieval-Augmented Generation (RAG) capabilities:
+
+1. **Query Transformation**
+   - Automatically transforms user questions into optimized search queries
+   - Breaks down complex questions into sub-questions for multi-hop reasoning
+
+2. **Context Processing**
+   - Retrieves relevant passages from multiple searches
+   - Rewrites and focuses context to be more relevant to the question
+   - Combines information from multiple sources
+
+3. **Multi-hop Reasoning**
+   - Follows chains of questions to gather comprehensive information
+   - Builds a reasoning path to explain the answer
+   - Combines evidence from multiple searches
+
+Example usage:
+```bash
+# Complex question requiring multiple lookups
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context my_collection \
+  --question "What are the similarities and differences between neural networks and decision trees in terms of training time and interpretability?"
+
+# Question requiring both historical and current information
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context historical_data \
+  --question "How has climate change affected Arctic wildlife populations, and what are the projected future impacts?"
+```
+
+The plugin will:
+1. Transform the question into optimal search queries
+2. Perform multiple searches to gather comprehensive information
+3. Rewrite and focus the context for relevance
+4. Generate a well-reasoned answer with supporting evidence
+
 ## Supported DSPy Modules
 
 The plugin supports any DSPy module that can be initialized with a signature and called with a prompt string. Some commonly used modules include:

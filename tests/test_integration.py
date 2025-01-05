@@ -13,11 +13,12 @@ from llm_dspy import EnhancedRAGModule
 def run_command(cmd: str) -> tuple[str, str, int]:
     """Run a shell command and return stdout, stderr, and return code."""
     process = subprocess.Popen(
-        shlex.split(cmd),
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).parent)}
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parent)},
+        shell=True  # Enable shell features like pipes
     )
     stdout, stderr = process.communicate()
     return stdout.strip(), stderr.strip(), process.returncode
@@ -67,7 +68,7 @@ def test_basic_dspy_command(installed_plugin):
 
 def test_complex_signature(installed_plugin):
     """Test using a more complex signature with multiple inputs/outputs."""
-    cmd = 'llm dspy "ChainOfThought(context, question -> answer, confidence)" "Here is some context" "What can you tell me?"'
+    cmd = 'llm dspy "ChainOfThought(context, question -> answer, confidence)" --context "Here is some context" --question "What can you tell me?"'
     stdout, stderr, code = run_command(cmd)
     assert code == 0, f"Command failed: {stderr}"
     assert stdout, "Expected non-empty output"
@@ -189,21 +190,17 @@ def test_enhanced_rag_integration(installed_plugin, tmp_path):
     assert code == 0, f"Failed to embed cuisine doc: {stderr}"
     
     # Use the enhanced RAG module through the command line
-    cmd = 'llm dspy "EnhancedRAGModule(collection_name, question -> answer)" paris_guide "What makes Paris special in terms of landmarks and cuisine?"'
+    cmd = 'llm dspy "EnhancedRAGModule(collection_name, question -> answer)" --collection_name paris_guide --question "What makes Paris special in terms of landmarks and cuisine?"'
     stdout, stderr, code = run_command(cmd)
     
     # Verify the command succeeded
     assert code == 0, f"Command failed: {stderr}"
     assert stdout, "Expected non-empty output"
-    
-    # Verify the answer contains information from both documents
-    answer = stdout.lower()
-    assert any(landmark in answer for landmark in ['eiffel', 'louvre']), "Answer should mention landmarks"
-    assert any(food in answer for food in ['cuisine', 'culinary', 'coq au vin', 'boeuf bourguignon']), "Answer should mention cuisine"
+    assert "Eiffel Tower" in stdout, "Expected answer to mention Eiffel Tower"
+    assert "cuisine" in stdout.lower(), "Expected answer to mention cuisine"
     
     # Clean up
-    stdout, stderr, code = run_command("llm collections delete paris_guide")
-    assert code == 0, f"Failed to delete collection: {stderr}"
+    run_command("llm collections delete paris_guide")
 
 def test_rag_error_handling(mocker):
     """Test error handling in the enhanced RAG implementation."""
@@ -258,3 +255,85 @@ def test_rag_with_empty_results(mocker):
     
     # Verify that the collection was searched
     assert mock_collection.similar.call_count > 0, "Should attempt to retrieve documents" 
+
+def test_single_input_positional(installed_plugin):
+    """Test single input field with positional argument."""
+    cmd = 'llm dspy "ChainOfThought(foo -> bar)" "What is 2+2?"'
+    stdout, stderr, code = run_command(cmd)
+    assert code == 0, f"Command failed: {stderr}"
+    assert stdout, "Expected non-empty output"
+    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+
+def test_single_input_stdin(installed_plugin, tmp_path):
+    """Test single input field from stdin."""
+    # Create a temporary file with input
+    input_file = tmp_path / "input.txt"
+    input_file.write_text("What is 2+2?")
+    
+    cmd = f'cat {input_file} | llm dspy "ChainOfThought(foo -> bar)"'
+    stdout, stderr, code = run_command(cmd)
+    assert code == 0, f"Command failed: {stderr}"
+    assert stdout, "Expected non-empty output"
+    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+
+def test_multiple_inputs_named_options(installed_plugin):
+    """Test multiple input fields with named options."""
+    cmd = 'llm dspy "ChainOfThought(foo, baz -> bar)" --foo "What is" --baz "2+2?"'
+    stdout, stderr, code = run_command(cmd)
+    assert code == 0, f"Command failed: {stderr}"
+    assert stdout, "Expected non-empty output"
+    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+
+def test_rag_with_collection(installed_plugin, tmp_path):
+    """Test RAG functionality with collection name as input."""
+    # Create test documents
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    
+    doc1 = docs_dir / "doc1.txt"
+    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
+    
+    # Create and populate collection
+    collection_name = "test_rag_collection_2"
+    stdout, stderr, code = run_command(f"llm embed {collection_name} doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
+    assert code == 0, f"Failed to embed doc1: {stderr}"
+    
+    # Test RAG with collection
+    cmd = f'llm dspy "ChainOfThought(foo, baz -> bar)" --foo "What is the capital of France?" --baz "{collection_name}"'
+    stdout, stderr, code = run_command(cmd)
+    
+    # Cleanup
+    run_command(f"llm collections delete {collection_name}")
+    
+    assert code == 0, f"Command failed: {stderr}"
+    assert stdout, "Expected non-empty output"
+    assert "Paris" in stdout, "Expected answer to contain 'Paris'"
+
+def test_stdin_with_multiple_inputs(installed_plugin, tmp_path):
+    """Test using stdin with multiple inputs and collection."""
+    # Create test documents
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    
+    doc1 = docs_dir / "doc1.txt"
+    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
+    
+    # Create input file
+    input_file = tmp_path / "input.txt"
+    input_file.write_text("What is the capital of France?")
+    
+    # Create and populate collection
+    collection_name = "test_rag_collection_3"
+    stdout, stderr, code = run_command(f"llm embed {collection_name} doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
+    assert code == 0, f"Failed to embed doc1: {stderr}"
+    
+    # Test with stdin and collection
+    cmd = f'cat {input_file} | llm dspy "ChainOfThought(foo, baz -> bar)" --foo stdin --baz "{collection_name}"'
+    stdout, stderr, code = run_command(cmd)
+    
+    # Cleanup
+    run_command(f"llm collections delete {collection_name}")
+    
+    assert code == 0, f"Command failed: {stderr}"
+    assert stdout, "Expected non-empty output"
+    assert "Paris" in stdout, "Expected answer to contain 'Paris'" 

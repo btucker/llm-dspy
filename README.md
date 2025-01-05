@@ -10,25 +10,58 @@ llm install -e path/to/llm-dspy
 
 ## Usage
 
-The plugin adds a new `dspy` command that can be used to run any DSPy module with a specified signature:
+The plugin adds a new `dspy` command that can be used to run any DSPy module with a specified signature. There are several ways to provide input:
 
+### 1. Single Input Field - Positional Argument
+When the module has only one input field, you can provide the value as a positional argument:
 ```bash
-# Basic usage
-llm dspy "ChainOfThought(question -> answer)" "What is 15% of 85?"
-llm dspy "ProgramOfThought(question -> answer:int)" "How many letter Rs are in the word Strawberry"
-
-# Chain of thought with multiple inputs/outputs
-llm dspy "ChainOfThought(context, question -> answer, confidence)" "Here's some context..." "What can you tell me?"
-
-# Enable verbose logging
-llm dspy -v "ChainOfThought(question -> answer)" "What is 15% of 85?"
-llm dspy --verbose "ChainOfThought(question -> answer)" "What is 15% of 85?"
+llm dspy "ChainOfThought(foo -> bar)" "input for foo"
 ```
 
-The command format is:
+### 2. Single Input Field - Stdin
+When the module has only one input field, you can pipe the input:
+```bash
+cat "input for foo" | llm dspy "ChainOfThought(foo -> bar)"
 ```
-llm dspy [options] "ModuleName(input_fields -> output_fields : type)" "Your prompt here"
+
+### 3. Multiple Input Fields - Named Options
+When the module has multiple input fields, use named options that match the field names:
+```bash
+llm dspy "ChainOfThought(foo, baz -> bar)" --foo "input for foo" --baz "input for baz"
 ```
+
+### 4. RAG Support - Collection Names
+Any input field can reference an LLM collection name for RAG functionality:
+```bash
+llm dspy "ChainOfThought(foo, baz -> bar)" --foo "input for foo" --baz "collection_name"
+```
+
+### 5. Stdin with Named Options
+You can use stdin for any input field by setting its value to "stdin":
+```bash
+cat "input for foo" | llm dspy "ChainOfThought(foo, baz -> bar)" --foo stdin --baz "collection_name"
+```
+
+### Command Format
+```
+llm dspy [options] "ModuleName(input_fields -> output_fields)" [input]
+```
+
+### Input Rules
+1. For single input field:
+   - Use positional argument OR
+   - Use stdin OR
+   - Use named option
+
+2. For multiple input fields:
+   - Must use named options (--field-name value)
+   - Any field can use stdin by setting value to "stdin"
+   - Any field can reference a collection name for RAG
+
+3. RAG Support:
+   - If an input value matches an LLM collection name, it's used for retrieval
+   - The collection is searched using other input values as queries
+   - Retrieved context is automatically incorporated into the prompt
 
 ### Options
 

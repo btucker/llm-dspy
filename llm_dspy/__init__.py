@@ -126,28 +126,50 @@ def register_commands(cli: click.Group) -> None:
             # Parse signature
             input_fields, output_fields = _parse_signature(signature)
             
-            # Map inputs to fields
+            # Initialize final kwargs
             final_kwargs = {}
             
-            # First, handle positional inputs
-            for field, value in zip(input_fields, inputs):
-                final_kwargs[field] = value
+            # Handle stdin input
+            stdin_data = None
+            if not sys.stdin.isatty():
+                stdin_data = sys.stdin.read().strip()
             
-            # Then, handle named options
-            for field in input_fields:
-                if field in kwargs and kwargs[field] is not None:
+            # Process inputs based on number of input fields
+            if len(input_fields) == 1:
+                # Single input field case
+                field = input_fields[0]
+                if field in kwargs and kwargs[field] == "stdin":
+                    # Explicit stdin for this field
+                    if stdin_data is None:
+                        print(f"Error: --{field} set to 'stdin' but no data provided via stdin", file=sys.stderr)
+                        sys.exit(1)
+                    final_kwargs[field] = stdin_data
+                elif field in kwargs and kwargs[field]:
+                    # Named option provided
                     final_kwargs[field] = kwargs[field]
-            
-            # Get the module class
-            try:
-                # Try to get the module from sys.modules first
-                if 'dspy' in sys.modules:
-                    module_class = getattr(sys.modules['dspy'], module_name)
+                elif inputs:
+                    # Positional argument provided
+                    final_kwargs[field] = inputs[0]
+                elif stdin_data is not None:
+                    # Implicit stdin
+                    final_kwargs[field] = stdin_data
                 else:
-                    module_class = getattr(dspy, module_name)
-            except AttributeError:
-                print(f"DSPy module {module_name} not found. Available modules: ChainOfThought, ProgramOfThought, Predict", file=sys.stderr)
-                sys.exit(1)
+                    print(f"Error: No input provided for field '{field}'", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                # Multiple input fields case - must use named options
+                for field in input_fields:
+                    if field not in kwargs or not kwargs[field]:
+                        print(f"Error: Missing required option --{field}", file=sys.stderr)
+                        sys.exit(1)
+                    
+                    if kwargs[field] == "stdin":
+                        if stdin_data is None:
+                            print(f"Error: --{field} set to 'stdin' but no data provided via stdin", file=sys.stderr)
+                            sys.exit(1)
+                        final_kwargs[field] = stdin_data
+                    else:
+                        final_kwargs[field] = kwargs[field]
             
             # Process RAG fields
             collections = {}  # Cache collections to avoid duplicate creation
@@ -165,6 +187,17 @@ def register_commands(cli: click.Group) -> None:
                     except:
                         # Not a collection name, leave it as is
                         pass
+            
+            # Get the module class
+            try:
+                # Try to get the module from sys.modules first
+                if 'dspy' in sys.modules:
+                    module_class = getattr(sys.modules['dspy'], module_name)
+                else:
+                    module_class = getattr(dspy, module_name)
+            except AttributeError:
+                print(f"DSPy module {module_name} not found. Available modules: ChainOfThought, ProgramOfThought, Predict", file=sys.stderr)
+                sys.exit(1)
             
             # Create module instance
             try:

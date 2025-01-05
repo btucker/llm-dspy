@@ -57,12 +57,16 @@ def test_multiple_inputs(mock_dspy_module, cli_runner, cli):
     result = cli_runner.invoke(cli, [
         "dspy",
         "ChainOfThought(context, question -> answer)",
-        "Here is some context",
-        "What can you tell me?"
+        "--context", "Here is some context",
+        "--question", "What can you tell me?"
     ])
     
     assert result.exit_code == 0
     assert "Simple answer" in result.output
+    mock_dspy_module.forward.assert_called_once_with(
+        context="Here is some context",
+        question="What can you tell me?"
+    )
 
 def test_invalid_module(cli_runner, cli):
     """Test error handling for invalid DSPy module"""
@@ -106,3 +110,81 @@ def test_rag_with_llm_embeddings(mocker, cli_runner, cli):
     
     assert result.exit_code == 0, f"Command failed with output: {result.output}"
     assert "Simple answer" in result.output 
+
+def test_single_input_positional(mock_dspy_module, cli_runner, cli):
+    """Test single input field with positional argument."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought(foo -> bar)",
+        "input for foo"
+    ])
+    
+    assert result.exit_code == 0
+    assert "Simple answer" in result.output
+    mock_dspy_module.forward.assert_called_once_with(foo="input for foo")
+
+def test_single_input_stdin(mock_dspy_module, cli_runner, cli):
+    """Test single input field from stdin."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought(foo -> bar)"
+    ], input="input for foo")
+    
+    assert result.exit_code == 0
+    assert "Simple answer" in result.output
+    mock_dspy_module.forward.assert_called_once_with(foo="input for foo")
+
+def test_multiple_inputs_named_options(mock_dspy_module, cli_runner, cli):
+    """Test multiple input fields with named options."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought(foo, baz -> bar)",
+        "--foo", "input for foo",
+        "--baz", "input for baz"
+    ])
+    
+    assert result.exit_code == 0
+    assert "Simple answer" in result.output
+    mock_dspy_module.forward.assert_called_once_with(foo="input for foo", baz="input for baz")
+
+@pytest.fixture
+def mock_collection(mocker):
+    """Mock LLM collection."""
+    mock = mocker.MagicMock()
+    mock.similar.return_value = [{"text": "Retrieved context"}]
+    mocker.patch('llm.Collection', return_value=mock)
+    return mock
+
+def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli):
+    """Test RAG with collection name as input."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought(foo, baz -> bar)",
+        "--foo", "input for foo",
+        "--baz", "collection_name"
+    ])
+    
+    assert result.exit_code == 0
+    assert "Simple answer" in result.output
+    mock_collection.similar.assert_called_once()
+    mock_dspy_module.forward.assert_called_once()
+    kwargs = mock_dspy_module.forward.call_args[1]
+    assert kwargs["foo"] == "input for foo"
+    assert "Retrieved context" in kwargs["baz"]
+
+def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runner, cli):
+    """Test using stdin with multiple inputs."""
+    result = cli_runner.invoke(cli, [
+        "dspy",
+        "ChainOfThought(foo, baz -> bar)",
+        "--foo", "stdin",
+        "--baz", "collection_name"
+    ], input="input for foo")
+    
+    assert result.exit_code == 0
+    assert "Simple answer" in result.output
+    mock_collection.similar.assert_called_once()
+    mock_dspy_module.forward.assert_called_once()
+    kwargs = mock_dspy_module.forward.call_args[1]
+    assert kwargs["foo"] == "input for foo"
+    assert "Retrieved context" in kwargs["baz"] 

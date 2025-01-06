@@ -12,13 +12,15 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
-    "click>=8.0"
+    "click>=8.0",
+    "pytest-asyncio>=0.23.0"
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-#addopts = "-v --cov=llm_dspy"
+# Coverage is opt-in, run with --cov flag when needed
+addopts = "-v"
 
 [project.entry-points.llm]
 dspy = "llm_dspy"

@@ -28,5 +28,6 @@ jobs:
         
     - name: Run unit tests
       run: |
+        # Only run unit tests, skip integration tests
         pytest tests/test_dspy_command.py -v
         

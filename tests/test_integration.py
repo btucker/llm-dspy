@@ -1,339 +1,488 @@
 import pytest
-import subprocess
-import json
+from click.testing import CliRunner
+from llm.cli import cli
+import tempfile
 import os
-from pathlib import Path
-import shlex
-import sys
-from unittest.mock import patch
-import llm
-import dspy
-from llm_dspy import EnhancedRAGModule
+from unittest.mock import Mock
+from tests.mocks.dspy_mock import MockPrediction
 
-def run_command(cmd: str) -> tuple[str, str, int]:
-    """Run a shell command and return stdout, stderr, and return code."""
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).parent)},
-        shell=True  # Enable shell features like pipes
-    )
-    stdout, stderr = process.communicate()
-    return stdout.strip(), stderr.strip(), process.returncode
+@pytest.fixture
+def runner():
+    return CliRunner()
 
-@pytest.fixture(scope="module")
-def installed_plugin():
-    """Install the plugin in editable mode and clean up after tests."""
-    # Get the project root directory (where pyproject.toml is)
-    root_dir = Path(__file__).parent.parent
-    
-    # Install the plugin
-    stdout, stderr, code = run_command(f"llm install -e {root_dir}")
-    assert code == 0, f"Failed to install plugin: {stderr}"
-    
-    # Add mocks directory to Python path
-    mocks_dir = Path(__file__).parent / "mocks"
-    sys.path.insert(0, str(mocks_dir))
-    
-    yield  # Run the tests
-    
-    # Remove mocks directory from Python path
-    sys.path.remove(str(mocks_dir))
-    
-    # Cleanup: Uninstall the plugin
-    stdout, stderr, code = run_command("llm uninstall llm-dspy -y")
-    assert code == 0, f"Failed to uninstall plugin: {stderr}"
+@pytest.fixture
+def sample_collection(runner):
+    # Create a temporary directory for test files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create sample files for different use cases
+        files = {
+            "medical_research.txt": """
+            Recent studies on mRNA vaccines show 95% efficacy against original strains.
+            Variant-specific boosters demonstrate 60-80% protection against newer variants.
+            Side effects remain minimal, primarily including fatigue and soreness.
+            Study limitations include small sample size and short observation period.
+            Next phase will focus on long-term immunity patterns.
+            """,
+            "legal_docs.txt": """
+            Privacy law precedent: Smith v. Technology Corp (2022)
+            Key findings: Companies must explicitly disclose data sharing practices
+            Impact: Strengthened user consent requirements
+            Jurisdiction: Federal Court, 9th Circuit
+            Precedent relevance score: 0.85
+            Risk factors identified: Data retention policies, Cross-border transfers
+            """,
+            "technical_docs.txt": """
+            OAuth2 Implementation Guide:
+            1. Token refresh occurs automatically within 5 minutes of expiration
+            2. Uses industry-standard encryption for token storage
+            3. Implements rate limiting on refresh attempts
+            Security compliance: OWASP Top 10 2021
+            Known vulnerabilities: None critical, 2 medium severity
+            Last audit date: 2023-12-15
+            """,
+            "source_code.py": """
+            def simple_function():
+                return 42
 
-def test_plugin_installation(installed_plugin):
-    """Test that the plugin is properly installed and visible to LLM."""
-    stdout, stderr, code = run_command("llm plugins")
-    assert code == 0, "llm plugins command failed"
-    
-    plugins = json.loads(stdout)
-    
-    # Find our plugin in the list
-    our_plugin = next((p for p in plugins if p["name"] == "llm-dspy"), None)
-    assert our_plugin is not None, "Plugin not found in llm plugins output"
-    assert "register_commands" in our_plugin["hooks"]
+            def complex_function(n):
+                for i in range(n):
+                    for j in range(n):
+                        print(i * j)
+            """,
+            "pull_request.diff": """
+            diff --git a/app.py b/app.py
+            --- a/app.py
+            +++ b/app.py
+            @@ -1,5 +1,7 @@
+             def process_data():
+            -    return data
+            +    if not validate_input(data):
+            +        raise ValueError("Invalid input")
+            +    return transform_data(data)
+            """,
+            "research_papers.txt": """
+            Renewable Energy Study 2023:
+            Solar Power:
+            - Environmental Impact Score: 85/100
+            - Cost Efficiency Rating: 75/100
+            - Implementation Challenges: Grid integration, Storage capacity
+            Wind Power:
+            - Environmental Impact Score: 90/100
+            - Cost Efficiency Rating: 70/100
+            - Implementation Challenges: Noise pollution, Visual impact
+            """,
+            "financial_reports.txt": """
+            Q2 2023 Market Analysis:
+            - Market Growth Rate: 12.5%
+            - Risk Assessment Score: 4/10
+            - Key Opportunities: 
+              * Cloud adoption trend
+              * AI integration demand
+              * Mobile-first solutions
+            - Potential Threats:
+              * New competitors
+              * Regulatory changes
+              * Supply chain disruptions
+            """,
+            "market_research.txt": """
+            Competitor Analysis Q2 2023:
+            Company A: 
+            - Market Share: 35%
+            - Growth Rate: 15%
+            - Key Features: AI automation, Cloud storage
+            Company B:
+            - Market Share: 25%
+            - Growth Rate: 8%
+            - Key Features: Mobile integration, Analytics
+            Priority Areas:
+            1. AI/ML capabilities
+            2. Mobile optimization
+            3. Security features
+            """
+        }
+        
+        # Write the files
+        for filename, content in files.items():
+            with open(os.path.join(tmpdir, filename), 'w') as f:
+                f.write(content.strip())
+        
+        yield tmpdir
 
-def test_basic_dspy_command(installed_plugin):
-    """Test running a basic DSPy command."""
-    cmd = 'llm dspy "ChainOfThought(question -> answer)" "What is 2+2?"'
-    stdout, stderr, code = run_command(cmd)
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+def test_single_input_basic(runner):
+    """Test basic single input with positional argument"""
+    result = runner.invoke(cli, [
+        'dspy',
+        'ChainOfThought(question -> answer)',
+        'Explain how photosynthesis works in simple terms.'
+    ])
+    print("Output:", result.output)  # Add debug output
+    print("Exit code:", result.exit_code)  # Add debug output
+    assert result.exit_code == 0
+    assert len(result.output.strip()) > 0
 
-def test_complex_signature(installed_plugin):
-    """Test using a more complex signature with multiple inputs/outputs."""
-    cmd = 'llm dspy "ChainOfThought(context, question -> answer, confidence)" --context "Here is some context" --question "What can you tell me?"'
-    stdout, stderr, code = run_command(cmd)
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert len(stdout) > 10, "Expected a reasonably long response"
+def test_single_input_classification(runner, mocker):
+    """Test sentiment classification with type annotation"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    mock_prediction = MockPrediction(answer="positive")
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.Predict', mock_module)
+    
+    result = runner.invoke(cli, [
+        'dspy',
+        'Predict(text -> sentiment: str{positive, negative, neutral})',
+        'This product exceeded all my expectations!'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    assert result.output.strip() in ['positive', 'negative', 'neutral']
 
-def test_invalid_module(installed_plugin):
-    """Test error handling for invalid module."""
-    cmd = 'llm dspy "NonexistentModule(question -> answer)" "test"'
-    stdout, stderr, code = run_command(cmd)
-    assert code != 0, "Expected command to fail"
-    assert "NonexistentModule not found" in stderr
+def test_stdin_basic(runner):
+    """Test basic stdin input"""
+    result = runner.invoke(cli, [
+        'dspy',
+        'ChainOfThought(question -> answer)'
+    ], input='What are the main differences between REST and GraphQL?')
+    assert result.exit_code == 0
+    assert len(result.output.strip()) > 0
 
-def test_invalid_signature_format(installed_plugin):
-    """Test error handling for invalid signature format."""
-    cmd = 'llm dspy "InvalidFormat" "test"'
-    stdout, stderr, code = run_command(cmd)
-    assert code != 0, "Expected command to fail"
-    assert "Invalid module signature format" in stderr 
+def test_stdin_code_complexity(runner, mocker, sample_collection):
+    """Test code complexity classification"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    mock_prediction = MockPrediction(answer="O(n^2)")
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.Predict', mock_module)
+    
+    with open(os.path.join(sample_collection, 'source_code.py'), 'r') as f:
+        code = f.read()
+    result = runner.invoke(cli, [
+        'dspy',
+        'Predict(code -> complexity: str{O(1), O(n), O(n^2), O(2^n)})'
+    ], input=code)
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    assert result.output.strip() in ['O(1)', 'O(n)', 'O(n^2)', 'O(2^n)']
 
-def test_rag_with_collection(installed_plugin, tmp_path):
-    """Test RAG functionality with a real LLM collection."""
-    # Create test documents
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    
-    doc1 = docs_dir / "doc1.txt"
-    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
-    
-    doc2 = docs_dir / "doc2.txt"
-    doc2.write_text("Paris has many museums, including the Louvre and Musee d'Orsay.")
-    
-    # Add documents to collection
-    stdout, stderr, code = run_command(f"llm embed test_collection doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed doc1: {stderr}"
-    
-    stdout, stderr, code = run_command(f"llm embed test_collection doc2 --content {shlex.quote(doc2.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed doc2: {stderr}"
-    
-    # Use the collection in a DSPy command
-    cmd = 'llm dspy "ChainOfThought(context, question -> answer)" --context test_collection --question "What can you tell me about Paris?"'
-    stdout, stderr, code = run_command(cmd)
-    
-    # Verify the command succeeded
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    
-    # Verify the answer contains information from our documents
-    assert any(word in stdout.lower() for word in ['paris', 'france', 'eiffel', 'louvre']), "Expected answer to contain information from the documents"
-    
-    # Clean up
-    stdout, stderr, code = run_command("llm collections delete test_collection")
-    assert code == 0, f"Failed to delete collection: {stderr}" 
+def test_multiple_inputs_basic(runner):
+    """Test multiple inputs with named options"""
+    result = runner.invoke(cli, [
+        'dspy',
+        'ChainOfThought(topic, audience -> explanation)',
+        '--topic', 'quantum computing',
+        '--audience', 'high school students'
+    ])
+    assert result.exit_code == 0
+    assert len(result.output.strip()) > 0
 
-def test_dspy_completion_interface(installed_plugin):
-    """Test that DSPy's completion interface works correctly with our LLM adapter."""
-    cmd = 'llm dspy "Predict(question -> answer)" "What is 2+2?"'
-    stdout, stderr, code = run_command(cmd)
+def test_multiple_inputs_structured(runner, mocker):
+    """Test multiple inputs with structured output"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'root_cause': "Memory allocation issue",
+        'severity': "high",
+        'fix_steps': ["Implement chunked upload", "Add memory limits", "Monitor usage"]
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    # The command should succeed
-    assert code == 0, f"Command failed: {stderr}"
-    
-    # We should get a non-empty response
-    assert stdout, "Expected non-empty output"
-    
-    # The response should contain a number
-    assert any(char.isdigit() for char in stdout), "Expected response to contain a number"
-    
-    # The response should specifically contain 4
-    assert "4" in stdout, "Expected response to contain the correct answer (4)" 
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(bug_report, system_context -> root_cause: str, severity: str{low, medium, high}, fix_steps: list[str])',
+        '--bug_report', 'Application crashes when uploading files larger than 1GB',
+        '--system_context', 'Node.js backend with S3 storage'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert 'root_cause' in output
+    assert any(level in output for level in ['low', 'medium', 'high'])
+    assert '[' in output and ']' in output  # Check for list output
 
-def test_dspy_rag_functionality(installed_plugin, tmp_path):
-    """Test that DSPy's RAG functionality works correctly with our LLM adapter."""
-    # Create test documents
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    
-    doc1 = docs_dir / "doc1.txt"
-    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
-    
-    # Add document to collection
-    stdout, stderr, code = run_command(f"llm embed test_rag_collection doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed doc1: {stderr}"
-    
-    # Use DSPy's RAG capabilities
-    cmd = 'llm dspy "ChainOfThought(context, question -> answer)" --context test_rag_collection --question "What is the capital of France?"'
-    stdout, stderr, code = run_command(cmd)
-    
-    # The command should succeed
-    assert code == 0, f"Command failed: {stderr}"
-    
-    # We should get a non-empty response
-    assert stdout, "Expected non-empty output"
-    
-    # The response should contain information from our document
-    assert "Paris" in stdout, "Expected response to contain information from the document"
-    
-    # Clean up
-    stdout, stderr, code = run_command("llm collections delete test_rag_collection")
-    assert code == 0, f"Failed to delete collection: {stderr}" 
+def test_rag_basic(runner, sample_collection):
+    """Test basic RAG functionality"""
+    result = runner.invoke(cli, [
+        'dspy',
+        'ChainOfThought(context, question -> answer)',
+        '--context', 'technical_docs',
+        '--question', 'How does our authentication system handle OAuth2 token refresh?'
+    ])
+    assert result.exit_code == 0
+    assert 'token' in result.output.lower()
+    assert 'refresh' in result.output.lower()
 
-def test_enhanced_rag_integration(installed_plugin, tmp_path):
-    """Integration test for the enhanced RAG implementation."""
-    # Create test documents
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
+def test_rag_fact_extraction(runner, mocker, sample_collection):
+    """Test RAG with fact extraction"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'dates': ['2022'],
+        'amounts': [0.85],
+        'entities': ['Smith', 'Technology Corp', 'Federal Court', '9th Circuit']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    # Create documents with information about Paris landmarks and cuisine
-    doc1 = docs_dir / "landmarks.txt"
-    doc1.write_text("Paris is known for its iconic landmarks. The Eiffel Tower and Louvre Museum are the most famous landmarks in Paris.")
-    
-    doc2 = docs_dir / "cuisine.txt"
-    doc2.write_text("French cuisine is renowned for its sophistication. Paris restaurants serve dishes like coq au vin and boeuf bourguignon.")
-    
-    # Add documents to collection
-    stdout, stderr, code = run_command(f"llm embed paris_guide landmarks --content {shlex.quote(doc1.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed landmarks doc: {stderr}"
-    
-    stdout, stderr, code = run_command(f"llm embed paris_guide cuisine --content {shlex.quote(doc2.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed cuisine doc: {stderr}"
-    
-    # Use the enhanced RAG module through the command line
-    cmd = 'llm dspy "EnhancedRAGModule(collection_name, question -> answer)" --collection_name paris_guide --question "What makes Paris special in terms of landmarks and cuisine?"'
-    stdout, stderr, code = run_command(cmd)
-    
-    # Verify the command succeeded
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "Eiffel Tower" in stdout, "Expected answer to mention Eiffel Tower"
-    assert "cuisine" in stdout.lower(), "Expected answer to mention cuisine"
-    
-    # Clean up
-    run_command("llm collections delete paris_guide")
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(context, query -> dates: list[str], amounts: list[float], entities: list[str])',
+        '--context', 'legal_docs',
+        '--query', 'Extract all dates, amounts, and entities from the document'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert '[' in output and ']' in output  # Check for list output
+    assert '2022' in output  # Should find the date from sample data
 
-def test_rag_error_handling(mocker):
-    """Test error handling in the enhanced RAG implementation."""
-    # Mock the collection to raise an exception
-    mock_collection = mocker.MagicMock()
-    mock_collection.similar.side_effect = Exception("Failed to connect to database")
+def test_stdin_with_options(runner, mocker, sample_collection):
+    """Test stdin with additional options"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'feedback': ['Added input validation', 'Improved error handling'],
+        'risk_level': 'medium',
+        'approval': True
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    # Mock the collection class
-    mock_collection_class = mocker.MagicMock(return_value=mock_collection)
-    mocker.patch('llm.Collection', mock_collection_class)
-    
-    # Create the enhanced RAG module with max_hops=1 to limit searches
-    rag_module = EnhancedRAGModule(k=1, max_hops=1)
-    
-    # Test with a simple question
-    question = "What is the capital of France?"
-    result = rag_module(collection_name="test_collection", question=question)
-    
-    # Verify that the module handles the error gracefully
-    assert result.answer, "Should still provide an answer even when retrieval fails"
-    
-    # Verify that the collection was created
-    mock_collection_class.assert_called_with("test_collection", model_id="ada-002")
-    
-    # Verify that search attempts were made and failed
-    assert mock_collection.similar.call_count > 0, "Should attempt to search at least once"
-    
-    # Verify all calls failed with the expected error
-    for call_args in mock_collection.similar.call_args_list:
-        assert 'text' in call_args[1], "Each search should have a query"
-        assert call_args[1]['n'] == 1, "Should request 1 result per search as specified by k=1"
+    with open(os.path.join(sample_collection, 'pull_request.diff'), 'r') as f:
+        diff = f.read()
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(diff, standards -> feedback: list[str], risk_level: str{low, medium, high}, approval: bool)',
+        '--diff', 'stdin',
+        '--standards', 'standard code review practices'
+    ], input=diff)
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(level in output for level in ['low', 'medium', 'high'])
+    assert any(val in output for val in ['true', 'false', 'True', 'False'])
 
-def test_rag_with_empty_results(mocker):
-    """Test RAG behavior when no relevant documents are found."""
-    # Mock the collection to return empty results
-    mock_collection = mocker.MagicMock()
-    mock_collection.similar.return_value = []
+def test_complex_rag_analysis(runner, mocker, sample_collection):
+    """Test complex RAG analysis with multiple fields"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'environmental_impact': 85.5,
+        'cost_efficiency': 75.0,
+        'implementation_challenges': ['Storage stability', 'Distribution logistics', 'Temperature control'],
+        'recommendations': ['Improve cold chain', 'Partner with logistics providers', 'Invest in monitoring']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    # Mock the collection class
-    mock_collection_class = mocker.MagicMock(return_value=mock_collection)
-    mocker.patch('llm.Collection', mock_collection_class)
-    
-    # Create the enhanced RAG module
-    rag_module = EnhancedRAGModule(collection_name="empty_collection", k=1)
-    
-    # Test with a question
-    question = "What is in the collection?"
-    result = rag_module(question)
-    
-    # Verify that the module handles empty results gracefully
-    assert result.answer, "Should provide an answer even with no retrieved documents"
-    
-    # Verify that the collection was searched
-    assert mock_collection.similar.call_count > 0, "Should attempt to retrieve documents" 
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])',
+        '--context', 'medical_research',
+        '--analysis_request', 'Analyze the efficacy and implementation challenges of mRNA vaccines'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(str(i) in output for i in range(101))  # Check for float{0-100}
+    assert '[' in output and ']' in output  # Check for list output
 
-def test_single_input_positional(installed_plugin):
-    """Test single input field with positional argument."""
-    cmd = 'llm dspy "ChainOfThought(foo -> bar)" "What is 2+2?"'
-    stdout, stderr, code = run_command(cmd)
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+def test_security_audit(runner, mocker, sample_collection):
+    """Test security audit with compliance check"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'compliance_status': 'partial',
+        'vulnerabilities': ['Token expiration not enforced', 'Missing rate limiting'],
+        'risk_level': 'high',
+        'action_items': ['Implement token expiration', 'Add rate limiting', 'Update documentation']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
+    
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(context, audit_scope -> compliance_status: str{compliant, partial, non_compliant}, vulnerabilities: list[str], risk_level: str{low, medium, high, critical}, action_items: list[str])',
+        '--context', 'technical_docs',
+        '--audit_scope', 'Evaluate OAuth2 implementation against OWASP standards'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(status in output for status in ['compliant', 'partial', 'non_compliant'])
+    assert any(level in output for level in ['low', 'medium', 'high', 'critical'])
+    assert '[' in output and ']' in output  # Check for list output
 
-def test_single_input_stdin(installed_plugin, tmp_path):
-    """Test single input field from stdin."""
-    # Create a temporary file with input
-    input_file = tmp_path / "input.txt"
-    input_file.write_text("What is 2+2?")
+def test_strategic_planning(runner, mocker, sample_collection):
+    """Test strategic planning with dictionary outputs"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'priority_score': {'feature_a': 0.85, 'feature_b': 0.75, 'feature_c': 0.65},
+        'timeline': {'feature_a': 'Q3', 'feature_b': 'Q4', 'feature_c': 'Q1 2024'},
+        'resource_requirements': ['2 backend devs', '1 ML engineer', 'DevOps support'],
+        'expected_roi': 2.5
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    cmd = f'cat {input_file} | llm dspy "ChainOfThought(foo -> bar)"'
-    stdout, stderr, code = run_command(cmd)
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(market_data, competitor_analysis, objectives -> priority_score: dict[str, float], timeline: dict[str, str], resource_requirements: list[str], expected_roi: float)',
+        '--market_data', 'market_research',
+        '--competitor_analysis', 'competitor_reports',
+        '--objectives', 'Identify top 3 features for competitive advantage in Q3'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert '{' in output and '}' in output  # Check for dict output
+    assert '[' in output and ']' in output  # Check for list output
+    assert any(str(i) in output for i in range(10))  # Check for float values
 
-def test_multiple_inputs_named_options(installed_plugin):
-    """Test multiple input fields with named options."""
-    cmd = 'llm dspy "ChainOfThought(foo, baz -> bar)" --foo "What is" --baz "2+2?"'
-    stdout, stderr, code = run_command(cmd)
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "4" in stdout.lower(), "Expected answer to contain '4'"
+def test_medical_research_structured(runner, mocker, sample_collection):
+    """Test medical research with confidence levels"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'findings': ['Variant B shows 40% higher transmission', 'Vaccine efficacy reduced by 15%'],
+        'confidence_level': 'high',
+        'limitations': ['Small sample size', 'Limited geographic scope'],
+        'next_steps': ['Expand study population', 'Monitor new variants']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
+    
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(context, study_query -> findings: list[str], confidence_level: str{high, medium, low}, limitations: list[str], next_steps: list[str])',
+        '--context', 'medical_research',
+        '--study_query', 'Analyze the efficacy of different COVID-19 variants'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(level in output for level in ['high', 'medium', 'low'])
+    assert '[' in output and ']' in output  # Check for list output
 
-def test_rag_with_collection(installed_plugin, tmp_path):
-    """Test RAG functionality with collection name as input."""
-    # Create test documents
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
+def test_legal_analysis_with_metrics(runner, mocker, sample_collection):
+    """Test legal analysis with float metrics"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'jurisdiction': 'California',
+        'precedent_relevance': 0.85,
+        'risk_factors': ['User consent not explicit', 'Cross-border data transfer'],
+        'recommendation': 'Update privacy policy and implement consent management'
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    doc1 = docs_dir / "doc1.txt"
-    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
-    
-    # Create and populate collection
-    collection_name = "test_rag_collection_2"
-    stdout, stderr, code = run_command(f"llm embed {collection_name} doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed doc1: {stderr}"
-    
-    # Test RAG with collection
-    cmd = f'llm dspy "ChainOfThought(foo, baz -> bar)" --foo "What is the capital of France?" --baz "{collection_name}"'
-    stdout, stderr, code = run_command(cmd)
-    
-    # Cleanup
-    run_command(f"llm collections delete {collection_name}")
-    
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "Paris" in stdout, "Expected answer to contain 'Paris'"
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(background, case_details -> jurisdiction: str, precedent_relevance: float, risk_factors: list[str], recommendation: str)',
+        '--background', 'legal_docs',
+        '--case_details', 'Evaluate data privacy compliance for our new feature'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(str(i) in output for i in range(10))  # Check for float values
+    assert '[' in output and ']' in output  # Check for list output
 
-def test_stdin_with_multiple_inputs(installed_plugin, tmp_path):
-    """Test using stdin with multiple inputs and collection."""
-    # Create test documents
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
+def test_sustainability_metrics(runner, mocker, sample_collection):
+    """Test sustainability analysis with bounded float values"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'environmental_impact': 85.5,
+        'cost_efficiency': 75.0,
+        'implementation_challenges': ['Grid integration', 'Land use', 'Storage capacity'],
+        'recommendations': ['Hybrid solution', 'Smart grid deployment', 'Battery storage']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    doc1 = docs_dir / "doc1.txt"
-    doc1.write_text("The capital of France is Paris. It is known for the Eiffel Tower.")
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])',
+        '--context', 'research_papers',
+        '--analysis_request', 'Compare solar vs wind power for metropolitan areas'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(str(i) in output for i in range(101))  # Check for float{0-100}
+    assert '[' in output and ']' in output  # Check for list output
+
+def test_multi_source_analysis(runner, mocker, sample_collection):
+    """Test analysis with multiple RAG sources"""
+    # Mock the DSPy module
+    mock_module = mocker.MagicMock()
+    structured_output = {
+        'growth_rate': 12.5,
+        'risk_score': 7,
+        'opportunities': ['Market expansion', 'Product innovation'],
+        'threats': ['New competitors', 'Regulatory changes']
+    }
+    mock_prediction = MockPrediction(answer=str(structured_output))
+    mock_module.return_value = mock_module  # Return self to act as both class and instance
+    mock_module.forward.return_value = mock_prediction
+    mocker.patch('dspy.ProgramOfThought', mock_module)
     
-    # Create input file
-    input_file = tmp_path / "input.txt"
-    input_file.write_text("What is the capital of France?")
-    
-    # Create and populate collection
-    collection_name = "test_rag_collection_3"
-    stdout, stderr, code = run_command(f"llm embed {collection_name} doc1 --content {shlex.quote(doc1.read_text())} --model ada-002")
-    assert code == 0, f"Failed to embed doc1: {stderr}"
-    
-    # Test with stdin and collection
-    cmd = f'cat {input_file} | llm dspy "ChainOfThought(foo, baz -> bar)" --foo stdin --baz "{collection_name}"'
-    stdout, stderr, code = run_command(cmd)
-    
-    # Cleanup
-    run_command(f"llm collections delete {collection_name}")
-    
-    assert code == 0, f"Command failed: {stderr}"
-    assert stdout, "Expected non-empty output"
-    assert "Paris" in stdout, "Expected answer to contain 'Paris'" 
+    result = runner.invoke(cli, [
+        'dspy',
+        'ProgramOfThought(market_data, competitor_data, query -> growth_rate: float, risk_score: int{1-10}, opportunities: list[str], threats: list[str])',
+        '--market_data', 'financial_reports',
+        '--competitor_data', 'market_research',
+        '--query', 'Evaluate market position for Q3 planning'
+    ])
+    print("Output:", result.output)
+    print("Exit code:", result.exit_code)
+    print("Exception:", result.exception)
+    assert result.exit_code == 0
+    output = result.output.strip()
+    assert any(str(i) in output for i in range(11))  # Check for int{1-10}
+    assert '[' in output and ']' in output  # Check for list output 

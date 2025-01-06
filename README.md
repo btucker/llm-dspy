@@ -1,6 +1,6 @@
 # LLM-DSPy Plugin
 
-This plugin adds support for using DSPy modules directly through LLM's command system. It allows you to leverage DSPy's powerful modules like ChainOfThought, ProgramOfThought, and others with a simple command interface.
+This plugin adds support for using [DSPy](https://dspy.ai/) modules directly through [llm](https://llm.datasette.io/en/stable/index.html)'s command system. It allows you to leverage DSPy's modules like ChainOfThought, ProgramOfThought, and others with a simple command interface.
 
 ## Installation
 
@@ -15,31 +15,58 @@ The plugin adds a new `dspy` command that can be used to run any DSPy module wit
 ### 1. Single Input Field - Positional Argument
 When the module has only one input field, you can provide the value as a positional argument:
 ```bash
-llm dspy "ChainOfThought(foo -> bar)" "input for foo"
+llm dspy "ChainOfThought(question -> answer)" "Explain how photosynthesis works in simple terms."
+
+# With type annotation for classification
+llm dspy "Predict(text -> sentiment: str{positive, negative, neutral})" "This product exceeded all my expectations!"
 ```
 
 ### 2. Single Input Field - Stdin
 When the module has only one input field, you can pipe the input:
 ```bash
-cat "input for foo" | llm dspy "ChainOfThought(foo -> bar)"
+echo "What are the main differences between REST and GraphQL?" | llm dspy "ChainOfThought(question -> answer)"
+
+# Classify code complexity
+cat source_file.py | llm dspy "Predict(code -> complexity: str{O(1), O(n), O(n^2), O(2^n)})"
 ```
 
 ### 3. Multiple Input Fields - Named Options
 When the module has multiple input fields, use named options that match the field names:
 ```bash
-llm dspy "ChainOfThought(foo, baz -> bar)" --foo "input for foo" --baz "input for baz"
+llm dspy "ChainOfThought(topic, audience -> explanation)" \
+  --topic "quantum computing" \
+  --audience "high school students"
+
+# With structured output fields
+llm dspy "ProgramOfThought(bug_report, system_context -> root_cause: str, severity: str{low, medium, high}, fix_steps: list[str])" \
+  --bug_report "Application crashes when uploading files larger than 1GB" \
+  --system_context "Node.js backend with S3 storage"
 ```
 
 ### 4. RAG Support - Collection Names
 Any input field can reference an LLM collection name for RAG functionality:
 ```bash
-llm dspy "ChainOfThought(foo, baz -> bar)" --foo "input for foo" --baz "collection_name"
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context "company_docs" \
+  --question "What is our refund policy for international customers?"
+
+# With fact extraction
+llm dspy "ProgramOfThought(context, query -> dates: list[str], amounts: list[float], entities: list[str])" \
+  --context "financial_records" \
+  --query "Extract all transaction dates, amounts, and involved parties from Q2 reports"
 ```
 
 ### 5. Stdin with Named Options
 You can use stdin for any input field by setting its value to "stdin":
 ```bash
-cat "input for foo" | llm dspy "ChainOfThought(foo, baz -> bar)" --foo stdin --baz "collection_name"
+cat research_paper.txt | llm dspy "ChainOfThought(paper, style -> summary)" \
+  --paper stdin \
+  --style "technical but accessible"
+
+# Code review with structured feedback
+cat pull_request.diff | llm dspy "ProgramOfThought(diff, standards -> feedback: list[str], risk_level: str{low, medium, high}, approval: bool)" \
+  --diff stdin \
+  --standards "company_coding_standards"
 ```
 
 ### Command Format
@@ -86,20 +113,68 @@ Examples:
 ```bash
 # Basic RAG with context and question
 llm dspy "ChainOfThought(context, question -> answer)" \
-  --context my_collection \
-  --question "What insights can you find?"
+  --context "medical_research" \
+  --question "What are the latest findings on mRNA vaccine effectiveness?"
+
+# Medical research with structured analysis
+llm dspy "ProgramOfThought(context, study_query -> findings: list[str], confidence_level: str{high, medium, low}, limitations: list[str], next_steps: list[str])" \
+  --context "medical_research" \
+  --study_query "Analyze the efficacy of different COVID-19 variants"
 
 # Using background with a prompt
 llm dspy "ChainOfThought(background, prompt, style -> response)" \
-  --background knowledge_base \
-  --prompt "Analyze this" \
-  --style "concise"
+  --background "legal_precedents" \
+  --prompt "Analyze the implications of this case for privacy law" \
+  --style "professional legal analysis"
+
+# Legal analysis with classification
+llm dspy "ProgramOfThought(background, case_details -> jurisdiction: str, precedent_relevance: float, risk_factors: list[str], recommendation: str)" \
+  --background "legal_precedents" \
+  --case_details "Evaluate data privacy compliance for our new feature"
 
 # Multiple RAG sources
-llm dspy "ChainOfThought(context, documents, query -> answer)" \
-  --context primary_source \
-  --documents secondary_source \
-  --query "What are the differences?"
+llm dspy "ChainOfThought(context, documents, query -> analysis)" \
+  --context "financial_reports" \
+  --documents "market_research" \
+  --query "What market trends suggest potential growth opportunities?"
+
+# Financial analysis with metrics
+llm dspy "ProgramOfThought(market_data, competitor_data, query -> growth_rate: float, risk_score: int{1-10}, opportunities: list[str], threats: list[str])" \
+  --market_data "financial_reports" \
+  --competitor_data "market_research" \
+  --query "Evaluate market position for Q3 planning"
+
+# Complex research analysis requiring multiple lookups
+llm dspy "ProgramOfThought(context, question -> answer)" \
+  --context "research_papers" \
+  --question "What are the environmental and economic trade-offs between different renewable energy sources for urban environments?"
+
+# Detailed sustainability analysis
+llm dspy "ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])" \
+  --context "research_papers" \
+  --analysis_request "Compare solar vs wind power for metropolitan areas"
+
+# Technical documentation analysis with historical context
+llm dspy "ChainOfThought(context, question -> answer)" \
+  --context "system_architecture" \
+  --question "How has our authentication system evolved over the past year, and what security improvements were implemented?"
+
+# Security audit with compliance check
+llm dspy "ProgramOfThought(context, audit_scope -> compliance_status: str{compliant, partial, non_compliant}, vulnerabilities: list[str], risk_level: str{low, medium, high, critical}, action_items: list[str])" \
+  --context "system_architecture" \
+  --audit_scope "Evaluate OAuth2 implementation against OWASP standards"
+
+# Multi-source analysis for business decisions
+llm dspy "ProgramOfThought(market_data, competitor_analysis, question -> recommendation)" \
+  --market_data "market_research" \
+  --competitor_analysis "competitor_reports" \
+  --question "Based on current market conditions and competitor strategies, what product features should we prioritize for Q3?"
+
+# Strategic planning with metrics
+llm dspy "ProgramOfThought(market_data, competitor_analysis, objectives -> priority_score: dict[str, float], timeline: dict[str, str], resource_requirements: list[str], expected_roi: float)" \
+  --market_data "market_research" \
+  --competitor_analysis "competitor_reports" \
+  --objectives "Identify top 3 features for competitive advantage in Q3"
 ```
 
 The plugin automatically detects which fields should trigger RAG functionality based on their names in the signature.
@@ -112,19 +187,19 @@ The plugin supports Retrieval-Augmented Generation (RAG) using LLM's embeddings 
 
 Example:
 ```bash
-# First, create and populate an LLM collection
-llm embed my_collection document1.txt document2.txt
+# First, create and populate an LLM collection with technical documentation
+llm embed technical_docs api_reference.md architecture.md deployment_guide.md
 
-# Then use it with DSPy
+# Then use it with DSPy for technical queries
 llm dspy "ChainOfThought(context, question -> answer)" \
-  --context my_collection \
-  --question "What insights can you find in the documents?"
+  --context technical_docs \
+  --question "How does our authentication system handle OAuth2 token refresh?"
 
-# You can also use it with other inputs
+# Combine with style guidance for specific audiences
 llm dspy "ChainOfThought(context, question, style -> answer)" \
-  --context my_collection \
-  --question "What are the key points?" \
-  "Make it concise"
+  --context technical_docs \
+  --question "Explain our microservices architecture" \
+  --style "suitable for non-technical stakeholders"
 ```
 
 The plugin will:
@@ -152,21 +227,43 @@ The plugin now includes advanced Retrieval-Augmented Generation (RAG) capabiliti
 
 Example usage:
 ```bash
-# Complex question requiring multiple lookups
-llm dspy "ChainOfThought(context, question -> answer)" \
-  --context my_collection \
-  --question "What are the similarities and differences between neural networks and decision trees in terms of training time and interpretability?"
+# Complex research analysis requiring multiple lookups
+llm dspy "ProgramOfThought(context, question -> answer)" \
+  --context "research_papers" \
+  --question "What are the environmental and economic trade-offs between different renewable energy sources for urban environments?"
 
-# Question requiring both historical and current information
+# Detailed sustainability analysis
+llm dspy "ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])" \
+  --context "research_papers" \
+  --analysis_request "Compare solar vs wind power for metropolitan areas"
+
+# Technical documentation analysis with historical context
 llm dspy "ChainOfThought(context, question -> answer)" \
-  --context historical_data \
-  --question "How has climate change affected Arctic wildlife populations, and what are the projected future impacts?"
+  --context "system_architecture" \
+  --question "How has our authentication system evolved over the past year, and what security improvements were implemented?"
+
+# Security audit with compliance check
+llm dspy "ProgramOfThought(context, audit_scope -> compliance_status: str{compliant, partial, non_compliant}, vulnerabilities: list[str], risk_level: str{low, medium, high, critical}, action_items: list[str])" \
+  --context "system_architecture" \
+  --audit_scope "Evaluate OAuth2 implementation against OWASP standards"
+
+# Multi-source analysis for business decisions
+llm dspy "ProgramOfThought(market_data, competitor_analysis, question -> recommendation)" \
+  --market_data "market_research" \
+  --competitor_analysis "competitor_reports" \
+  --question "Based on current market conditions and competitor strategies, what product features should we prioritize for Q3?"
+
+# Strategic planning with metrics
+llm dspy "ProgramOfThought(market_data, competitor_analysis, objectives -> priority_score: dict[str, float], timeline: dict[str, str], resource_requirements: list[str], expected_roi: float)" \
+  --market_data "market_research" \
+  --competitor_analysis "competitor_reports" \
+  --objectives "Identify top 3 features for competitive advantage in Q3"
 ```
 
-The plugin will:
-1. Transform the question into optimal search queries
-2. Perform multiple searches to gather comprehensive information
-3. Rewrite and focus the context for relevance
+The plugin will: 
+1. Transform the question into optimal search queries (e.g., breaking down complex questions about renewable energy into specific aspects)
+2. Perform multiple searches to gather comprehensive information (e.g., searching across different time periods for system evolution)
+3. Rewrite and focus the context for relevance (e.g., filtering competitor data to relevant product categories)
 4. Generate a well-reasoned answer with supporting evidence
 
 ## Supported DSPy Modules

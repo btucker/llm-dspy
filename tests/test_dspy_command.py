@@ -182,8 +182,15 @@ def test_multiple_inputs_named_options(mock_dspy_module, cli_runner, cli):
     assert "Simple answer" in result.output
     mock_dspy_module.forward.assert_called_once_with(foo="input for foo", baz="input for baz")
 
-def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli):
+def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli, mocker):
     """Test RAG with collection name as input."""
+    # Mock EnhancedRAGModule
+    mock_rag = mocker.MagicMock()
+    mock_rag_instance = mocker.MagicMock()
+    mock_rag_instance.forward.return_value = mocker.MagicMock(answer="Retrieved context")
+    mock_rag.return_value = mock_rag_instance
+    mocker.patch('dspy.EnhancedRAGModule', mock_rag)
+    
     result = cli_runner.invoke(cli, [
         "dspy",
         "ChainOfThought(foo, baz, query -> bar)",
@@ -194,14 +201,22 @@ def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli
     
     assert result.exit_code == 0
     assert "Simple answer" in result.output
-    mock_collection.similar.assert_called_once()
+    mock_rag.assert_called_once_with(collection_name="collection_name", k=5)
+    mock_rag_instance.forward.assert_called_once_with(question="test query")
     mock_dspy_module.forward.assert_called_once()
     kwargs = mock_dspy_module.forward.call_args[1]
     assert kwargs["foo"] == "input for foo"
-    assert "Retrieved context" in kwargs["baz"]
+    assert kwargs["baz"] == "Retrieved context"
 
-def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runner, cli):
+def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runner, cli, mocker):
     """Test using stdin with multiple inputs."""
+    # Mock EnhancedRAGModule
+    mock_rag = mocker.MagicMock()
+    mock_rag_instance = mocker.MagicMock()
+    mock_rag_instance.forward.return_value = mocker.MagicMock(answer="Retrieved context")
+    mock_rag.return_value = mock_rag_instance
+    mocker.patch('dspy.EnhancedRAGModule', mock_rag)
+    
     result = cli_runner.invoke(cli, [
         "dspy",
         "ChainOfThought(foo, baz, query -> bar)",
@@ -212,8 +227,9 @@ def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runne
     
     assert result.exit_code == 0
     assert "Simple answer" in result.output
-    mock_collection.similar.assert_called_once()
+    mock_rag.assert_called_once_with(collection_name="collection_name", k=5)
+    mock_rag_instance.forward.assert_called_once_with(question="test query")
     mock_dspy_module.forward.assert_called_once()
     kwargs = mock_dspy_module.forward.call_args[1]
     assert kwargs["foo"] == "input for foo"
-    assert "Retrieved context" in kwargs["baz"] 
+    assert kwargs["baz"] == "Retrieved context" 

@@ -200,22 +200,24 @@ def register_commands(cli: click.Group) -> None:
             
             # Check for collection names and retrieve context
             query = kwargs.get('query')
+            if not query:
+                # Look for question or prompt fields
+                query = kwargs.get('question') or kwargs.get('prompt')
+            
             if query:  # Only try RAG if we have a query
                 for field, value in list(final_kwargs.items()):
                     try:
                         if hasattr(llm, 'collections') and value in llm.collections:
-                            # This field contains a collection name, use RAG
-                            collection = llm.collections[value]
-                            retriever = LLMRetriever(collection_name=value, collection=collection)
-                            result = retriever(query)
-                            if result and result.passages:
-                                context = "\n\n".join(p["text"] for p in result.passages)
-                                logger.debug(f"Retrieved context for {field}: {context}")
-                                final_kwargs[field] = context
+                            # This field contains a collection name, use enhanced RAG
+                            rag = dspy.EnhancedRAGModule(collection_name=value, k=5)
+                            result = rag.forward(question=query)
+                            if result and hasattr(result, 'answer'):
+                                logger.debug(f"Retrieved and processed context for {field}")
+                                final_kwargs[field] = result.answer
                             else:
-                                logger.warning(f"No passages retrieved for {field}")
+                                logger.warning(f"No answer generated for {field}")
                     except Exception as e:
-                        logger.debug(f"Error checking collection for field {field}: {str(e)}")
+                        logger.debug(f"Error processing collection for field {field}: {str(e)}")
                         continue  # Skip this field if there's an error
             
             if verbose:

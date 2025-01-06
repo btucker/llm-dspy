@@ -209,62 +209,34 @@ The plugin will:
 
 ### Enhanced RAG Support
 
-The plugin now includes advanced Retrieval-Augmented Generation (RAG) capabilities:
+The plugin includes advanced Retrieval-Augmented Generation (RAG) capabilities by default when using collections:
 
-1. **Query Transformation**
-   - Automatically transforms user questions into optimized search queries
+1. **Automatic Query Transformation**
+   - Transforms user questions into optimized search queries
    - Breaks down complex questions into sub-questions for multi-hop reasoning
 
 2. **Context Processing**
-   - Retrieves relevant passages from multiple searches
-   - Rewrites and focuses context to be more relevant to the question
-   - Combines information from multiple sources
+   - Retrieves and rewrites context to focus on the specific question
+   - Preserves important details like dates, amounts, and technical terms
+   - Maintains structure of lists and bullet points
 
-3. **Multi-hop Reasoning**
-   - Follows chains of questions to gather comprehensive information
-   - Builds a reasoning path to explain the answer
-   - Combines evidence from multiple searches
+3. **Intelligent Answer Generation**
+   - Adapts response format based on question type
+   - Ensures all relevant details from context are included
+   - Maintains exact numbers, dates, and technical terms
 
-Example usage:
+Example:
 ```bash
-# Complex research analysis requiring multiple lookups
-llm dspy "ProgramOfThought(context, question -> answer)" \
-  --context "research_papers" \
-  --question "What are the environmental and economic trade-offs between different renewable energy sources for urban environments?"
-
-# Detailed sustainability analysis
-llm dspy "ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])" \
-  --context "research_papers" \
-  --analysis_request "Compare solar vs wind power for metropolitan areas"
-
-# Technical documentation analysis with historical context
+# Use a collection with enhanced RAG features automatically
 llm dspy "ChainOfThought(context, question -> answer)" \
-  --context "system_architecture" \
-  --question "How has our authentication system evolved over the past year, and what security improvements were implemented?"
+  --context technical_docs \
+  --question "What are our key financial metrics for Q2 2023?"
 
-# Security audit with compliance check
-llm dspy "ProgramOfThought(context, audit_scope -> compliance_status: str{compliant, partial, non_compliant}, vulnerabilities: list[str], risk_level: str{low, medium, high, critical}, action_items: list[str])" \
-  --context "system_architecture" \
-  --audit_scope "Evaluate OAuth2 implementation against OWASP standards"
-
-# Multi-source analysis for business decisions
-llm dspy "ProgramOfThought(market_data, competitor_analysis, question -> recommendation)" \
-  --market_data "market_research" \
-  --competitor_analysis "competitor_reports" \
-  --question "Based on current market conditions and competitor strategies, what product features should we prioritize for Q3?"
-
-# Strategic planning with metrics
-llm dspy "ProgramOfThought(market_data, competitor_analysis, objectives -> priority_score: dict[str, float], timeline: dict[str, str], resource_requirements: list[str], expected_roi: float)" \
-  --market_data "market_research" \
-  --competitor_analysis "competitor_reports" \
-  --objectives "Identify top 3 features for competitive advantage in Q3"
+# The plugin will:
+# 1. Transform the question into optimized search queries
+# 2. Retrieve and process relevant context
+# 3. Generate a comprehensive answer with all key metrics
 ```
-
-The plugin will: 
-1. Transform the question into optimal search queries (e.g., breaking down complex questions about renewable energy into specific aspects)
-2. Perform multiple searches to gather comprehensive information (e.g., searching across different time periods for system evolution)
-3. Rewrite and focus the context for relevance (e.g., filtering competitor data to relevant product categories)
-4. Generate a well-reasoned answer with supporting evidence
 
 ## Supported DSPy Modules
 

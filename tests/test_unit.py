@@ -47,8 +47,20 @@ def test_query_transformer_accepts_list():
     assert len(result.sub_questions) == 1
     assert result.sub_questions[0] == "sub question 1"
 
-def test_enhanced_rag_fixed_collection():
+def test_enhanced_rag_fixed_collection(mocker):
     """Test that EnhancedRAGModule maintains fixed collection state."""
+    # Mock llm.collections
+    mock_collection = mocker.MagicMock()
+    mock_collections = {'collection1': mock_collection, 'collection2': mocker.MagicMock()}
+    
+    # Create collections attribute if it doesn't exist
+    import llm
+    if not hasattr(llm, 'collections'):
+        setattr(llm, 'collections', {})
+    
+    # Now patch collections
+    mocker.patch.dict('llm.collections', mock_collections)
+    
     module = EnhancedRAGModule(collection_name="collection1")
     assert module.collection_name == "collection1"
     

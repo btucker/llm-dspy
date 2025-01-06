@@ -1,73 +1,9 @@
 import sys
 import re
-import ast
-from typing import Dict, List, Tuple, Any, Union, get_type_hints
+from typing import Dict, List, Any
 import dspy
 import llm
-
-def _parse_type_annotation(annotation_str: str) -> Any:
-    """Parse a type annotation string into a Python type."""
-    try:
-        # Handle Literal types
-        if annotation_str.startswith('Literal['):
-            values = re.findall(r'"([^"]*)"', annotation_str)
-            if not values:
-                values = re.findall(r'\'([^\']*)\'', annotation_str)
-            from typing import Literal
-            return Literal[tuple(values)]
-        
-        # Handle List types
-        if annotation_str.startswith('List['):
-            inner_type = _parse_type_annotation(annotation_str[5:-1])
-            return List[inner_type]
-        
-        # Handle Dict types
-        if annotation_str.startswith('Dict['):
-            key_type, value_type = annotation_str[5:-1].split(',')
-            return Dict[_parse_type_annotation(key_type.strip()), _parse_type_annotation(value_type.strip())]
-        
-        # Handle constrained types
-        if annotation_str.startswith('conint('):
-            args = re.findall(r'(\w+)=(\d+)', annotation_str)
-            return int
-        if annotation_str.startswith('confloat('):
-            args = re.findall(r'(\w+)=(\d+)', annotation_str)
-            return float
-        
-        # Handle basic types
-        if annotation_str == 'str':
-            return str
-        if annotation_str == 'int':
-            return int
-        if annotation_str == 'float':
-            return float
-        if annotation_str == 'bool':
-            return bool
-        
-        return str  # Default to str for unknown types
-    except:
-        return str
-
-def _parse_field(field_str: str) -> Tuple[str, Any]:
-    """Parse a field string into name and type."""
-    parts = field_str.strip().split(':')
-    if len(parts) == 1:
-        return parts[0], str
-    name, type_str = parts
-    return name.strip(), _parse_type_annotation(type_str.strip())
-
-def _parse_signature(signature: str):
-    """Parse a DSPy module signature into input and output fields."""
-    parts = signature.split('->')
-    if len(parts) != 2:
-        raise ValueError("Invalid signature format. Expected: inputs -> outputs")
-    
-    input_str, output_str = parts
-    input_fields = [_parse_field(f) for f in input_str.split(',') if f.strip()]
-    output_fields = [_parse_field(f) for f in output_str.split(',') if f.strip()]
-    
-    # Return both field names and types
-    return dict(input_fields), dict(output_fields)
+from dspy.signatures.signature import ensure_signature
 
 def _process_rag_field(field_name: str, collection_name: str, kwargs: dict, collection=None):
     """Process a RAG field by retrieving relevant documents."""
@@ -117,18 +53,18 @@ Based on the above context, please answer the following question:
 def run_dspy_module(module_name: str, signature: str, **kwargs):
     """Run a DSPy module with the given signature and keyword arguments."""
     try:
-        # Parse signature
+        # Parse signature using DSPy's ensure_signature
         print(f"Parsing signature: {signature}")
-        input_fields, output_fields = _parse_signature(signature)
-        print(f"Extracted input fields: {input_fields}")
+        sig = ensure_signature(signature)
+        print(f"Extracted input fields: {sig.input_fields}")
         
         # Process input fields
-        print(f"Processing input fields: {input_fields}")
+        print(f"Processing input fields: {sig.input_fields}")
         print(f"Available kwargs: {kwargs}")
         print(f"Positional inputs: {tuple()}")
         
         # Process RAG fields
-        for field in input_fields:
+        for field in sig.input_fields:
             if field in kwargs:
                 # Check if this is a collection name
                 try:
@@ -148,43 +84,15 @@ def run_dspy_module(module_name: str, signature: str, **kwargs):
         
         # Get the module class
         try:
-            # Try to get the module from sys.modules first
-            if 'dspy' in sys.modules:
-                module_class = getattr(sys.modules['dspy'], module_name)
-            else:
-                module_class = getattr(dspy, module_name)
+            module_class = getattr(dspy, module_name)
         except AttributeError:
-            # Try to get it from our own modules
-            try:
-                from ..rag import EnhancedRAGModule
-                if module_name == 'EnhancedRAGModule':
-                    module_class = EnhancedRAGModule
-                else:
-                    raise AttributeError(f"DSPy module {module_name} not found")
-            except ImportError:
-                raise AttributeError(f"DSPy module {module_name} not found")
+            print(f"DSPy module {module_name} not found", file=sys.stderr)
+            return None
         
-        # Create module instance with type information
-        module = module_class(signature=signature, input_fields=input_fields, output_fields=output_fields)
-        
-        # Run the module
+        # Create and run the module
+        module = module_class()
         result = module.forward(**kwargs)
-        
-        # Return the result
-        if hasattr(result, 'text'):
-            return result.text
-        elif hasattr(result, 'answer'):
-            return result.answer
-        elif hasattr(result, '__dict__'):
-            # Convert structured output to string
-            output_str = "Prediction(\n"
-            for key, value in result.__dict__.items():
-                output_str += f"    {key}={repr(value)},\n"
-            output_str += ")"
-            return output_str
-        else:
-            return str(result)
-            
+        return result
     except Exception as e:
         print(f"Error running DSPy module: {str(e)}", file=sys.stderr)
-        raise
+        return None

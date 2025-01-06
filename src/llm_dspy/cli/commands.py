@@ -3,7 +3,7 @@ import re
 import click
 import llm
 import dspy
-from ..core.module import _parse_signature, _process_rag_field
+from ..core.module import _process_rag_field
 from dspy.signatures.signature import ensure_signature
 
 @llm.hookimpl

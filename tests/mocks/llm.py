@@ -98,7 +98,7 @@ class Collection:
         for id, content in self.documents.items():
             content_words = set(content.lower().split())
             
-            # Calculate similarity based on partial word matches
+            # Calculate similarity based on partial word matches and chronological order
             score = 0
             for qword in query_words:
                 # Check for exact word match
@@ -110,6 +110,25 @@ class Collection:
                         if (qword in cword) or (cword in qword):
                             score += 0.5
                             break
+            
+            # Boost score for chronological queries if content has dates
+            if any(term in query_words for term in ['chronological', 'order', 'date']):
+                import re
+                dates = re.findall(r'(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}', content)
+                if dates:
+                    # Give higher scores to earlier dates for chronological ordering
+                    months = {
+                        'January': 1, 'February': 2, 'March': 3, 'April': 4,
+                        'May': 5, 'June': 6, 'July': 7, 'August': 8,
+                        'September': 9, 'October': 10, 'November': 11, 'December': 12
+                    }
+                    # Extract first date for sorting
+                    first_date = dates[0]
+                    month = next(m for m in months.keys() if m in first_date)
+                    day = int(re.search(r'\d+', first_date).group())
+                    # Earlier dates get higher scores
+                    date_score = 1.0 - (months[month] * 31 + day) / (12 * 31)
+                    score += date_score
             
             # Normalize score by query length to get value between 0 and 1
             score = score / len(query_words) if query_words else 0
@@ -126,6 +145,14 @@ class Collection:
         # Sort by score in descending order
         entries.sort(key=lambda x: x.score, reverse=True)
         return entries[:number]
+    
+    def embed(self, id, content, metadata=None, store=False):
+        """Store a single document."""
+        self.documents[id] = content
+    
+    def delete(self):
+        """Delete the collection."""
+        self.documents.clear()
 
 def get_model():
     return MockModel()

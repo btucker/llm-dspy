@@ -15,6 +15,15 @@ def mock_dspy_configure():
     with patch('dspy.configure') as mock:
         yield mock
 
+@pytest.fixture(autouse=True)
+def mock_ensure_signature(mocker):
+    """Mock ensure_signature to return object with input/output fields."""
+    mock = mocker.MagicMock()
+    mock.input_fields = {'question': str}  # Default for single input
+    mock.output_fields = {'answer': str}  # Default for single output
+    mocker.patch('dspy.signatures.signature.ensure_signature', return_value=mock)
+    return mock
+
 @pytest.fixture
 def mock_dspy_module(mocker):
     """Mock DSPy module."""
@@ -52,8 +61,12 @@ def test_basic_question(mock_dspy_module, cli_runner, cli):
     assert result.exit_code == 0
     assert "Simple answer" in result.output
 
-def test_multiple_inputs(mock_dspy_module, cli_runner, cli):
+def test_multiple_inputs(mock_dspy_module, mock_ensure_signature, cli_runner, cli):
     """Test handling multiple inputs."""
+    # Update mock signature for multiple inputs
+    mock_ensure_signature.input_fields = {'context': str, 'question': str}
+    mock_ensure_signature.output_fields = {'answer': str}
+    
     result = cli_runner.invoke(cli, [
         "dspy",
         "ChainOfThought(context, question -> answer)",
@@ -153,15 +166,26 @@ def mock_collection(mocker):
     mock = mocker.MagicMock()
     mock.similar.return_value = [{"text": "Retrieved context"}]
     mocker.patch('llm.Collection', return_value=mock)
-    return mock
+    
+    # Register the mock collection
+    if not hasattr(llm, 'collections'):
+        llm.collections = {}
+    llm.collections['collection_name'] = mock
+    
+    yield mock
+    
+    # Clean up
+    if hasattr(llm, 'collections'):
+        llm.collections.pop('collection_name', None)
 
 def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli):
     """Test RAG with collection name as input."""
     result = cli_runner.invoke(cli, [
         "dspy",
-        "ChainOfThought(foo, baz -> bar)",
+        "ChainOfThought(foo, baz, query -> bar)",
         "--foo", "input for foo",
-        "--baz", "collection_name"
+        "--baz", "collection_name",
+        "--query", "test query"
     ])
     
     assert result.exit_code == 0
@@ -176,9 +200,10 @@ def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runne
     """Test using stdin with multiple inputs."""
     result = cli_runner.invoke(cli, [
         "dspy",
-        "ChainOfThought(foo, baz -> bar)",
+        "ChainOfThought(foo, baz, query -> bar)",
         "--foo", "stdin",
-        "--baz", "collection_name"
+        "--baz", "collection_name",
+        "--query", "test query"
     ], input="input for foo")
     
     assert result.exit_code == 0

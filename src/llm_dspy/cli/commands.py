@@ -4,6 +4,7 @@ import click
 import llm
 import dspy
 from ..core.module import _parse_signature, _process_rag_field
+from dspy.signatures.signature import ensure_signature
 
 @llm.hookimpl
 def register_commands(cli: click.Group) -> None:
@@ -11,31 +12,43 @@ def register_commands(cli: click.Group) -> None:
     
     class DynamicCommand(click.Command):
         """Command that adds options based on the signature."""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # Add verbose flag
+            self.params.append(
+                click.Option(
+                    ('-v', '--verbose'),
+                    is_flag=True,
+                    help='Enable verbose output'
+                )
+            )
+
         def parse_args(self, ctx, args):
             # Get the module spec argument
             if len(args) >= 1:
                 module_spec = args[0]
                 try:
                     # Parse module spec
-                    match = re.match(r'(\w+)\((.*?)\)', module_spec)
+                    match = re.match(r'(\w+)\(((?:[^()[\]]*|\[[^\[\]]*\]|\([^()]*\))*)\)', module_spec)
                     if not match:
                         print("Invalid module signature format. Expected: ModuleName(inputs -> outputs)", file=sys.stderr)
                         ctx.exit(1)
                     
-                    _, signature = match.groups()
+                    _, signature_str = match.groups()
                     
-                    # Parse signature to get input fields
-                    input_fields, _ = _parse_signature(signature)
+                    # Parse signature using DSPy's ensure_signature
+                    signature = ensure_signature(signature_str)
+                    input_fields = signature.input_fields
                     
                     # Clear existing params that were dynamically added
-                    self.params = [p for p in self.params if not isinstance(p, click.Option)]
+                    self.params = [p for p in self.params if not isinstance(p, click.Option) or p.name == 'verbose']
                     
                     # Add options for each input field
-                    for field in input_fields:
+                    for field_name in input_fields:
                         option = click.Option(
-                            ('--' + field,),
+                            ('--' + field_name,),
                             required=False,  # Make it optional since we also support positional args
-                            help=f'Value for {field}'
+                            help=f'Value for {field_name}'
                         )
                         self.params.append(option)
                 except Exception as e:
@@ -47,19 +60,26 @@ def register_commands(cli: click.Group) -> None:
     @cli.command(name='dspy', cls=DynamicCommand)
     @click.argument('module_spec')
     @click.argument('inputs', nargs=-1)
-    def dspy_command(module_spec: str, inputs: tuple, **kwargs):
+    def dspy_command(module_spec: str, inputs: tuple, verbose: bool = False, **kwargs):
         """Run a DSPy module with the given module spec and inputs."""
         try:
             # Parse module spec (e.g., "ChainOfThought(question -> answer)")
-            match = re.match(r'(\w+)\((.*?)\)', module_spec)
+            match = re.match(r'(\w+)\(((?:[^()[\]]*|\[[^\[\]]*\]|\([^()]*\))*)\)', module_spec)
             if not match:
                 print("Invalid module signature format. Expected: ModuleName(inputs -> outputs)", file=sys.stderr)
                 sys.exit(1)
             
             module_name, signature = match.groups()
             
-            # Parse signature
-            input_fields, output_fields = _parse_signature(signature)
+            # Parse signature using DSPy's ensure_signature
+            signature = ensure_signature(signature)
+            input_fields = signature.input_fields
+            output_fields = signature.output_fields
+            
+            if verbose:
+                print(f"Module: {module_name}", file=sys.stderr)
+                print(f"Input fields: {input_fields}", file=sys.stderr)
+                print(f"Output fields: {output_fields}", file=sys.stderr)
             
             # Initialize final kwargs
             final_kwargs = {}
@@ -72,7 +92,7 @@ def register_commands(cli: click.Group) -> None:
             # Process inputs based on number of input fields
             if len(input_fields) == 1:
                 # Single input field case
-                field = input_fields[0]
+                field = next(iter(input_fields))
                 if field in kwargs and kwargs[field] == "stdin":
                     # Explicit stdin for this field
                     if stdin_data is None:
@@ -106,6 +126,9 @@ def register_commands(cli: click.Group) -> None:
                     else:
                         final_kwargs[field] = kwargs[field]
             
+            if verbose:
+                print(f"Final kwargs: {final_kwargs}", file=sys.stderr)
+            
             # Process RAG fields
             collections = {}  # Cache collections to avoid duplicate creation
             for field in input_fields:
@@ -134,7 +157,7 @@ def register_commands(cli: click.Group) -> None:
                 print(f"DSPy module {module_name} not found. Available modules: ChainOfThought, ProgramOfThought, Predict", file=sys.stderr)
                 sys.exit(1)
             
-            # Create module instance
+            # Create module instance with type information
             try:
                 module = module_class(signature=signature)
             except Exception as e:
@@ -144,6 +167,8 @@ def register_commands(cli: click.Group) -> None:
             # Run the module
             try:
                 result = module.forward(**final_kwargs)
+                if verbose:
+                    print(f"Module result: {result}", file=sys.stderr)
             except Exception as e:
                 print(f"Error running module: {str(e)}", file=sys.stderr)
                 sys.exit(1)

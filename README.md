@@ -15,30 +15,30 @@ The plugin adds a new `dspy` command that can be used to run any DSPy module wit
 ### 1. Single Input Field - Positional Argument
 When the module has only one input field, you can provide the value as a positional argument:
 ```bash
-llm dspy "ChainOfThought(question -> answer)" "Explain how photosynthesis works in simple terms."
+llm dspy "ChainOfThought(question: str -> answer: str)" "Explain how photosynthesis works in simple terms."
 
 # With type annotation for classification
-llm dspy "Predict(text -> sentiment: str{positive, negative, neutral})" "This product exceeded all my expectations!"
+llm dspy "Predict(text: str -> sentiment: Literal['positive', 'negative', 'neutral'])" "This product exceeded all my expectations!"
 ```
 
 ### 2. Single Input Field - Stdin
 When the module has only one input field, you can pipe the input:
 ```bash
-echo "What are the main differences between REST and GraphQL?" | llm dspy "ChainOfThought(question -> answer)"
+echo "What are the main differences between REST and GraphQL?" | llm dspy "ChainOfThought(question: str -> answer: str)"
 
 # Classify code complexity
-cat source_file.py | llm dspy "Predict(code -> complexity: str{O(1), O(n), O(n^2), O(2^n)})"
+cat source_file.py | llm dspy "Predict(code: str -> complexity: Literal['O(1)', 'O(n)', 'O(n^2)', 'O(2^n)'])"
 ```
 
 ### 3. Multiple Input Fields - Named Options
 When the module has multiple input fields, use named options that match the field names:
 ```bash
-llm dspy "ChainOfThought(topic, audience -> explanation)" \
+llm dspy "ChainOfThought(topic: str, audience: str -> explanation: str)" \
   --topic "quantum computing" \
   --audience "high school students"
 
 # With structured output fields
-llm dspy "ProgramOfThought(bug_report, system_context -> root_cause: str, severity: str{low, medium, high}, fix_steps: list[str])" \
+llm dspy "ProgramOfThought(bug_report: str, system_context: str -> root_cause: str, severity: Literal['low', 'medium', 'high'], fix_steps: List[str])" \
   --bug_report "Application crashes when uploading files larger than 1GB" \
   --system_context "Node.js backend with S3 storage"
 ```
@@ -46,12 +46,12 @@ llm dspy "ProgramOfThought(bug_report, system_context -> root_cause: str, severi
 ### 4. RAG Support - Collection Names
 Any input field can reference an LLM collection name for RAG functionality:
 ```bash
-llm dspy "ChainOfThought(context, question -> answer)" \
+llm dspy "ChainOfThought(context: str, question: str -> answer: str)" \
   --context "company_docs" \
   --question "What is our refund policy for international customers?"
 
 # With fact extraction
-llm dspy "ProgramOfThought(context, query -> dates: list[str], amounts: list[float], entities: list[str])" \
+llm dspy "ProgramOfThought(context: str, query: str -> dates: List[str], amounts: List[float], entities: List[str])" \
   --context "financial_records" \
   --query "Extract all transaction dates, amounts, and involved parties from Q2 reports"
 ```
@@ -59,12 +59,12 @@ llm dspy "ProgramOfThought(context, query -> dates: list[str], amounts: list[flo
 ### 5. Stdin with Named Options
 You can use stdin for any input field by setting its value to "stdin":
 ```bash
-cat research_paper.txt | llm dspy "ChainOfThought(paper, style -> summary)" \
+cat research_paper.txt | llm dspy "ChainOfThought(paper: str, style: str -> summary: str)" \
   --paper stdin \
   --style "technical but accessible"
 
 # Code review with structured feedback
-cat pull_request.diff | llm dspy "ProgramOfThought(diff, standards -> feedback: list[str], risk_level: str{low, medium, high}, approval: bool)" \
+cat pull_request.diff | llm dspy "ProgramOfThought(diff: str, standards: str -> feedback: List[str], risk_level: Literal['low', 'medium', 'high'], approval: bool)" \
   --diff stdin \
   --standards "company_coding_standards"
 ```
@@ -117,7 +117,7 @@ llm dspy "ChainOfThought(context, question -> answer)" \
   --question "What are the latest findings on mRNA vaccine effectiveness?"
 
 # Medical research with structured analysis
-llm dspy "ProgramOfThought(context, study_query -> findings: list[str], confidence_level: str{high, medium, low}, limitations: list[str], next_steps: list[str])" \
+llm dspy "ProgramOfThought(context: str, study_query: str -> findings: List[str], confidence_level: Literal['high', 'medium', 'low'], limitations: List[str], next_steps: List[str])" \
   --context "medical_research" \
   --study_query "Analyze the efficacy of different COVID-19 variants"
 
@@ -139,7 +139,7 @@ llm dspy "ChainOfThought(context, documents, query -> analysis)" \
   --query "What market trends suggest potential growth opportunities?"
 
 # Financial analysis with metrics
-llm dspy "ProgramOfThought(market_data, competitor_data, query -> growth_rate: float, risk_score: int{1-10}, opportunities: list[str], threats: list[str])" \
+llm dspy "ProgramOfThought(market_data: str, competitor_data: str, query: str -> growth_rate: float, risk_score: conint(ge=1, le=10), opportunities: List[str], threats: List[str])" \
   --market_data "financial_reports" \
   --competitor_data "market_research" \
   --query "Evaluate market position for Q3 planning"
@@ -150,7 +150,7 @@ llm dspy "ProgramOfThought(context, question -> answer)" \
   --question "What are the environmental and economic trade-offs between different renewable energy sources for urban environments?"
 
 # Detailed sustainability analysis
-llm dspy "ProgramOfThought(context, analysis_request -> environmental_impact: float{0-100}, cost_efficiency: float{0-100}, implementation_challenges: list[str], recommendations: list[str])" \
+llm dspy "ProgramOfThought(context: str, analysis_request: str -> environmental_impact: confloat(ge=0, le=100), cost_efficiency: confloat(ge=0, le=100), implementation_challenges: List[str], recommendations: List[str])" \
   --context "research_papers" \
   --analysis_request "Compare solar vs wind power for metropolitan areas"
 
@@ -160,7 +160,7 @@ llm dspy "ChainOfThought(context, question -> answer)" \
   --question "How has our authentication system evolved over the past year, and what security improvements were implemented?"
 
 # Security audit with compliance check
-llm dspy "ProgramOfThought(context, audit_scope -> compliance_status: str{compliant, partial, non_compliant}, vulnerabilities: list[str], risk_level: str{low, medium, high, critical}, action_items: list[str])" \
+llm dspy "ProgramOfThought(context: str, audit_scope: str -> compliance_status: Literal['compliant', 'partial', 'non_compliant'], vulnerabilities: List[str], risk_level: Literal['low', 'medium', 'high', 'critical'], action_items: List[str])" \
   --context "system_architecture" \
   --audit_scope "Evaluate OAuth2 implementation against OWASP standards"
 

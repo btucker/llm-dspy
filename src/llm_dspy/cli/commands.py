@@ -4,9 +4,9 @@ import click
 import llm
 import dspy
 import logging
-from ..core.module import _process_rag_field
 from dspy.signatures.signature import ensure_signature
 from ..utils import setup_logging
+from ..rag.retriever import LLMRetriever
 
 logger = logging.getLogger('llm_dspy.cli')
 
@@ -133,25 +133,28 @@ def register_commands(cli: click.Group) -> None:
                     else:
                         final_kwargs[field] = kwargs[field]
             
+            # Check for collection names and retrieve context
+            query = kwargs.get('query')
+            if query:  # Only try RAG if we have a query
+                for field, value in list(final_kwargs.items()):
+                    try:
+                        if hasattr(llm, 'collections') and value in llm.collections:
+                            # This field contains a collection name, use RAG
+                            collection = llm.collections[value]
+                            retriever = LLMRetriever(collection_name=value, collection=collection)
+                            result = retriever(query)
+                            if result and result.passages:
+                                context = "\n\n".join(p["text"] for p in result.passages)
+                                logger.debug(f"Retrieved context for {field}: {context}")
+                                final_kwargs[field] = context
+                            else:
+                                logger.warning(f"No passages retrieved for {field}")
+                    except Exception as e:
+                        logger.debug(f"Error checking collection for field {field}: {str(e)}")
+                        continue  # Skip this field if there's an error
+            
             if verbose:
                 logger.debug(f"Final kwargs: {final_kwargs}")
-            
-            # Process RAG fields
-            collections = {}  # Cache collections to avoid duplicate creation
-            for field in input_fields:
-                if field in final_kwargs and isinstance(final_kwargs[field], str):
-                    # Check if this is a collection name
-                    try:
-                        # Only try to use as collection if it looks like a collection name
-                        if len(final_kwargs[field].split()) == 1 and len(final_kwargs[field]) <= 50:
-                            collection_name = final_kwargs[field]
-                            if collection_name not in collections:
-                                collections[collection_name] = llm.Collection(collection_name, model_id="ada-002")
-                            # Use the cached collection
-                            final_kwargs = _process_rag_field(field, collection_name, final_kwargs, collections[collection_name])
-                    except:
-                        # Not a collection name, leave it as is
-                        pass
             
             # Get the module class
             try:

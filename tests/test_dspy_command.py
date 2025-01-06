@@ -25,6 +25,28 @@ def mock_ensure_signature(mocker):
     return mock
 
 @pytest.fixture
+def mock_collection(mocker):
+    """Create a mock collection that returns predictable results."""
+    collection = mocker.MagicMock()
+    collection.similar.return_value = [{"text": "Retrieved context"}]
+    
+    # Mock Collection constructor
+    mocker.patch('llm.Collection', return_value=collection)
+    
+    # Create collections dict if it doesn't exist
+    if not hasattr(llm, 'collections'):
+        setattr(llm, 'collections', {})
+    
+    # Set up collections dict
+    llm.collections['collection_name'] = collection
+    
+    yield collection
+    
+    # Clean up
+    if hasattr(llm, 'collections'):
+        delattr(llm, 'collections')
+
+@pytest.fixture
 def mock_dspy_module(mocker):
     """Mock DSPy module."""
     mock_module = mocker.MagicMock()
@@ -159,24 +181,6 @@ def test_multiple_inputs_named_options(mock_dspy_module, cli_runner, cli):
     assert result.exit_code == 0
     assert "Simple answer" in result.output
     mock_dspy_module.forward.assert_called_once_with(foo="input for foo", baz="input for baz")
-
-@pytest.fixture
-def mock_collection(mocker):
-    """Mock LLM collection."""
-    mock = mocker.MagicMock()
-    mock.similar.return_value = [{"text": "Retrieved context"}]
-    mocker.patch('llm.Collection', return_value=mock)
-    
-    # Register the mock collection
-    if not hasattr(llm, 'collections'):
-        llm.collections = {}
-    llm.collections['collection_name'] = mock
-    
-    yield mock
-    
-    # Clean up
-    if hasattr(llm, 'collections'):
-        llm.collections.pop('collection_name', None)
 
 def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli):
     """Test RAG with collection name as input."""

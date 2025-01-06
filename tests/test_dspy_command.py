@@ -15,6 +15,37 @@ def mock_dspy_configure():
     with patch('dspy.configure') as mock:
         yield mock
 
+@pytest.fixture(autouse=True)
+def mock_ensure_signature(mocker):
+    """Mock ensure_signature to return object with input/output fields."""
+    mock = mocker.MagicMock()
+    mock.input_fields = {'question': str}  # Default for single input
+    mock.output_fields = {'answer': str}  # Default for single output
+    mocker.patch('dspy.signatures.signature.ensure_signature', return_value=mock)
+    return mock
+
+@pytest.fixture
+def mock_collection(mocker):
+    """Create a mock collection that returns predictable results."""
+    collection = mocker.MagicMock()
+    collection.similar.return_value = [{"text": "Retrieved context"}]
+    
+    # Mock Collection constructor
+    mocker.patch('llm.Collection', return_value=collection)
+    
+    # Create collections dict if it doesn't exist
+    if not hasattr(llm, 'collections'):
+        setattr(llm, 'collections', {})
+    
+    # Set up collections dict
+    llm.collections['collection_name'] = collection
+    
+    yield collection
+    
+    # Clean up
+    if hasattr(llm, 'collections'):
+        delattr(llm, 'collections')
+
 @pytest.fixture
 def mock_dspy_module(mocker):
     """Mock DSPy module."""
@@ -52,8 +83,12 @@ def test_basic_question(mock_dspy_module, cli_runner, cli):
     assert result.exit_code == 0
     assert "Simple answer" in result.output
 
-def test_multiple_inputs(mock_dspy_module, cli_runner, cli):
+def test_multiple_inputs(mock_dspy_module, mock_ensure_signature, cli_runner, cli):
     """Test handling multiple inputs."""
+    # Update mock signature for multiple inputs
+    mock_ensure_signature.input_fields = {'context': str, 'question': str}
+    mock_ensure_signature.output_fields = {'answer': str}
+    
     result = cli_runner.invoke(cli, [
         "dspy",
         "ChainOfThought(context, question -> answer)",
@@ -147,44 +182,54 @@ def test_multiple_inputs_named_options(mock_dspy_module, cli_runner, cli):
     assert "Simple answer" in result.output
     mock_dspy_module.forward.assert_called_once_with(foo="input for foo", baz="input for baz")
 
-@pytest.fixture
-def mock_collection(mocker):
-    """Mock LLM collection."""
-    mock = mocker.MagicMock()
-    mock.similar.return_value = [{"text": "Retrieved context"}]
-    mocker.patch('llm.Collection', return_value=mock)
-    return mock
-
-def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli):
+def test_rag_input_collection(mock_dspy_module, mock_collection, cli_runner, cli, mocker):
     """Test RAG with collection name as input."""
+    # Mock EnhancedRAGModule
+    mock_rag = mocker.MagicMock()
+    mock_rag_instance = mocker.MagicMock()
+    mock_rag_instance.forward.return_value = mocker.MagicMock(answer="Retrieved context")
+    mock_rag.return_value = mock_rag_instance
+    mocker.patch('dspy.EnhancedRAGModule', mock_rag)
+    
     result = cli_runner.invoke(cli, [
         "dspy",
-        "ChainOfThought(foo, baz -> bar)",
+        "ChainOfThought(foo, baz, query -> bar)",
         "--foo", "input for foo",
-        "--baz", "collection_name"
+        "--baz", "collection_name",
+        "--query", "test query"
     ])
     
     assert result.exit_code == 0
     assert "Simple answer" in result.output
-    mock_collection.similar.assert_called_once()
+    mock_rag.assert_called_once_with(collection_name="collection_name", k=5)
+    mock_rag_instance.forward.assert_called_once_with(question="test query")
     mock_dspy_module.forward.assert_called_once()
     kwargs = mock_dspy_module.forward.call_args[1]
     assert kwargs["foo"] == "input for foo"
-    assert "Retrieved context" in kwargs["baz"]
+    assert kwargs["baz"] == "Retrieved context"
 
-def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runner, cli):
+def test_stdin_with_multiple_inputs(mock_dspy_module, mock_collection, cli_runner, cli, mocker):
     """Test using stdin with multiple inputs."""
+    # Mock EnhancedRAGModule
+    mock_rag = mocker.MagicMock()
+    mock_rag_instance = mocker.MagicMock()
+    mock_rag_instance.forward.return_value = mocker.MagicMock(answer="Retrieved context")
+    mock_rag.return_value = mock_rag_instance
+    mocker.patch('dspy.EnhancedRAGModule', mock_rag)
+    
     result = cli_runner.invoke(cli, [
         "dspy",
-        "ChainOfThought(foo, baz -> bar)",
+        "ChainOfThought(foo, baz, query -> bar)",
         "--foo", "stdin",
-        "--baz", "collection_name"
+        "--baz", "collection_name",
+        "--query", "test query"
     ], input="input for foo")
     
     assert result.exit_code == 0
     assert "Simple answer" in result.output
-    mock_collection.similar.assert_called_once()
+    mock_rag.assert_called_once_with(collection_name="collection_name", k=5)
+    mock_rag_instance.forward.assert_called_once_with(question="test query")
     mock_dspy_module.forward.assert_called_once()
     kwargs = mock_dspy_module.forward.call_args[1]
     assert kwargs["foo"] == "input for foo"
-    assert "Retrieved context" in kwargs["baz"] 
+    assert kwargs["baz"] == "Retrieved context" 

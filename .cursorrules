@@ -1,0 +1,5 @@
+This project is a plugin to the llm python package that
+integrates DSPy with the llm package.
+
+The source code for both llm & dspy are available to you 
+in the related-src directory.

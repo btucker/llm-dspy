@@ -3,7 +3,12 @@ import re
 import click
 import llm
 import dspy
-from ..core.module import _parse_signature, _process_rag_field
+import logging
+from dspy.signatures.signature import ensure_signature
+from ..utils import setup_logging
+from ..rag.retriever import LLMRetriever
+
+logger = logging.getLogger('llm_dspy.cli')
 
 @llm.hookimpl
 def register_commands(cli: click.Group) -> None:
@@ -11,35 +16,79 @@ def register_commands(cli: click.Group) -> None:
     
     class DynamicCommand(click.Command):
         """Command that adds options based on the signature."""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # Add verbose flag
+            self.params.append(
+                click.Option(
+                    ('-v', '--verbose'),
+                    is_flag=True,
+                    help='Enable verbose output'
+                )
+            )
+        
         def parse_args(self, ctx, args):
             # Get the module spec argument
             if len(args) >= 1:
                 module_spec = args[0]
                 try:
                     # Parse module spec
-                    match = re.match(r'(\w+)\((.*?)\)', module_spec)
+                    match = re.match(r'(\w+)\(((?:[^()[\]]*|\[[^\[\]]*\]|\([^()]*\))*)\)', module_spec)
                     if not match:
-                        print("Invalid module signature format. Expected: ModuleName(inputs -> outputs)", file=sys.stderr)
+                        logger.error("Invalid module signature format. Expected: ModuleName(inputs -> outputs)")
                         ctx.exit(1)
                     
-                    _, signature = match.groups()
+                    module_name, signature_str = match.groups()
                     
-                    # Parse signature to get input fields
-                    input_fields, _ = _parse_signature(signature)
+                    # Special handling for EnhancedRAGModule
+                    if module_name == 'EnhancedRAGModule':
+                        # Clear existing params that were dynamically added
+                        self.params = [p for p in self.params if not isinstance(p, click.Option) or p.name == 'verbose']
+                        
+                        # Add required options
+                        self.params.extend([
+                            click.Option(
+                                ('--collection_name',),
+                                required=True,
+                                help='Name of collection to use for retrieval'
+                            ),
+                            click.Option(
+                                ('--question',),
+                                required=True,
+                                help='Question to answer'
+                            ),
+                            click.Option(
+                                ('--k',),
+                                type=int,
+                                default=3,
+                                help='Number of passages to retrieve'
+                            ),
+                            click.Option(
+                                ('--max_hops',),
+                                type=int,
+                                default=2,
+                                help='Maximum number of reasoning hops'
+                            )
+                        ])
+                        return super().parse_args(ctx, args)
+                    
+                    # Parse signature using DSPy's ensure_signature
+                    signature = ensure_signature(signature_str)
+                    input_fields = signature.input_fields
                     
                     # Clear existing params that were dynamically added
-                    self.params = [p for p in self.params if not isinstance(p, click.Option)]
+                    self.params = [p for p in self.params if not isinstance(p, click.Option) or p.name == 'verbose']
                     
                     # Add options for each input field
-                    for field in input_fields:
+                    for field_name in input_fields:
                         option = click.Option(
-                            ('--' + field,),
+                            ('--' + field_name,),
                             required=False,  # Make it optional since we also support positional args
-                            help=f'Value for {field}'
+                            help=f'Value for {field_name}'
                         )
                         self.params.append(option)
                 except Exception as e:
-                    print(f"Error parsing signature: {str(e)}", file=sys.stderr)
+                    logger.error(f"Error parsing signature: {str(e)}")
                     ctx.exit(1)
             
             return super().parse_args(ctx, args)
@@ -47,19 +96,62 @@ def register_commands(cli: click.Group) -> None:
     @cli.command(name='dspy', cls=DynamicCommand)
     @click.argument('module_spec')
     @click.argument('inputs', nargs=-1)
-    def dspy_command(module_spec: str, inputs: tuple, **kwargs):
+    def dspy_command(module_spec: str, inputs: tuple, verbose: bool = False, **kwargs):
         """Run a DSPy module with the given module spec and inputs."""
         try:
+            # Set up logging based on verbose flag
+            setup_logging(verbose)
+            
             # Parse module spec (e.g., "ChainOfThought(question -> answer)")
-            match = re.match(r'(\w+)\((.*?)\)', module_spec)
+            match = re.match(r'(\w+)\(((?:[^()[\]]*|\[[^\[\]]*\]|\([^()]*\))*)\)', module_spec)
             if not match:
-                print("Invalid module signature format. Expected: ModuleName(inputs -> outputs)", file=sys.stderr)
+                logger.error("Invalid module signature format. Expected: ModuleName(inputs -> outputs)")
                 sys.exit(1)
             
             module_name, signature = match.groups()
             
-            # Parse signature
-            input_fields, output_fields = _parse_signature(signature)
+            # Special handling for EnhancedRAGModule
+            if module_name == 'EnhancedRAGModule':
+                if 'collection_name' not in kwargs:
+                    logger.error("Error: Missing required option --collection_name")
+                    sys.exit(1)
+                if 'question' not in kwargs:
+                    logger.error("Error: Missing required option --question")
+                    sys.exit(1)
+                
+                # Create module instance
+                try:
+                    module = dspy.EnhancedRAGModule(
+                        collection_name=kwargs['collection_name'],
+                        k=kwargs.get('k', 3),
+                        max_hops=kwargs.get('max_hops', 2)
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating module instance: {str(e)}")
+                    sys.exit(1)
+                
+                # Run the module
+                try:
+                    result = module.forward(question=kwargs['question'])
+                    if verbose:
+                        logger.debug(f"Module result: {result}")
+                except Exception as e:
+                    logger.error(f"Error running module: {str(e)}")
+                    sys.exit(1)
+                
+                # Return the result
+                click.echo(result.answer)
+                return
+            
+            # Parse signature using DSPy's ensure_signature
+            signature = ensure_signature(signature)
+            input_fields = signature.input_fields
+            output_fields = signature.output_fields
+            
+            if verbose:
+                logger.debug(f"Module: {module_name}")
+                logger.debug(f"Input fields: {input_fields}")
+                logger.debug(f"Output fields: {output_fields}")
             
             # Initialize final kwargs
             final_kwargs = {}
@@ -72,11 +164,11 @@ def register_commands(cli: click.Group) -> None:
             # Process inputs based on number of input fields
             if len(input_fields) == 1:
                 # Single input field case
-                field = input_fields[0]
+                field = next(iter(input_fields))
                 if field in kwargs and kwargs[field] == "stdin":
                     # Explicit stdin for this field
                     if stdin_data is None:
-                        print(f"Error: --{field} set to 'stdin' but no data provided via stdin", file=sys.stderr)
+                        logger.error(f"Error: --{field} set to 'stdin' but no data provided via stdin")
                         sys.exit(1)
                     final_kwargs[field] = stdin_data
                 elif field in kwargs and kwargs[field]:
@@ -89,39 +181,47 @@ def register_commands(cli: click.Group) -> None:
                     # Implicit stdin
                     final_kwargs[field] = stdin_data
                 else:
-                    print(f"Error: No input provided for field '{field}'", file=sys.stderr)
+                    logger.error(f"Error: No input provided for field '{field}'")
                     sys.exit(1)
             else:
                 # Multiple input fields case - must use named options
                 for field in input_fields:
                     if field not in kwargs or not kwargs[field]:
-                        print(f"Error: Missing required option --{field}", file=sys.stderr)
+                        logger.error(f"Error: Missing required option --{field}")
                         sys.exit(1)
                     
                     if kwargs[field] == "stdin":
                         if stdin_data is None:
-                            print(f"Error: --{field} set to 'stdin' but no data provided via stdin", file=sys.stderr)
+                            logger.error(f"Error: --{field} set to 'stdin' but no data provided via stdin")
                             sys.exit(1)
                         final_kwargs[field] = stdin_data
                     else:
                         final_kwargs[field] = kwargs[field]
             
-            # Process RAG fields
-            collections = {}  # Cache collections to avoid duplicate creation
-            for field in input_fields:
-                if field in final_kwargs and isinstance(final_kwargs[field], str):
-                    # Check if this is a collection name
+            # Check for collection names and retrieve context
+            query = kwargs.get('query')
+            if not query:
+                # Look for question or prompt fields
+                query = kwargs.get('question') or kwargs.get('prompt')
+            
+            if query:  # Only try RAG if we have a query
+                for field, value in list(final_kwargs.items()):
                     try:
-                        # Only try to use as collection if it looks like a collection name
-                        if len(final_kwargs[field].split()) == 1 and len(final_kwargs[field]) <= 50:
-                            collection_name = final_kwargs[field]
-                            if collection_name not in collections:
-                                collections[collection_name] = llm.Collection(collection_name, model_id="ada-002")
-                            # Use the cached collection
-                            final_kwargs = _process_rag_field(field, collection_name, final_kwargs, collections[collection_name])
-                    except:
-                        # Not a collection name, leave it as is
-                        pass
+                        if hasattr(llm, 'collections') and value in llm.collections:
+                            # This field contains a collection name, use enhanced RAG
+                            rag = dspy.EnhancedRAGModule(collection_name=value, k=5)
+                            result = rag.forward(question=query)
+                            if result and hasattr(result, 'answer'):
+                                logger.debug(f"Retrieved and processed context for {field}")
+                                final_kwargs[field] = result.answer
+                            else:
+                                logger.warning(f"No answer generated for {field}")
+                    except Exception as e:
+                        logger.debug(f"Error processing collection for field {field}: {str(e)}")
+                        continue  # Skip this field if there's an error
+            
+            if verbose:
+                logger.debug(f"Final kwargs: {final_kwargs}")
             
             # Get the module class
             try:
@@ -131,31 +231,35 @@ def register_commands(cli: click.Group) -> None:
                 else:
                     module_class = getattr(dspy, module_name)
             except AttributeError:
-                print(f"DSPy module {module_name} not found. Available modules: ChainOfThought, ProgramOfThought, Predict", file=sys.stderr)
+                error_msg = f"DSPy module {module_name} not found. Available modules: ChainOfThought, ProgramOfThought, Predict"
+                logger.error(error_msg)
+                click.echo(error_msg, err=True)  # Ensure error is echoed to stderr
                 sys.exit(1)
             
-            # Create module instance
+            # Create module instance with type information
             try:
                 module = module_class(signature=signature)
             except Exception as e:
-                print(f"Error creating module instance: {str(e)}", file=sys.stderr)
+                logger.error(f"Error creating module instance: {str(e)}")
                 sys.exit(1)
             
             # Run the module
             try:
                 result = module.forward(**final_kwargs)
+                if verbose:
+                    logger.debug(f"Module result: {result}")
             except Exception as e:
-                print(f"Error running module: {str(e)}", file=sys.stderr)
+                logger.error(f"Error running module: {str(e)}")
                 sys.exit(1)
             
             # Return the result
             if hasattr(result, 'text'):
-                print(result.text)
+                click.echo(result.text)
             elif hasattr(result, 'answer'):
-                print(result.answer)
+                click.echo(result.answer)
             else:
-                print(str(result))
+                click.echo(str(result))
                 
         except Exception as e:
-            print(f"Error: {str(e)}", file=sys.stderr)
+            logger.error(f"Error: {str(e)}")
             sys.exit(1)

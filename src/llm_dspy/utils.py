@@ -1,9 +1,27 @@
 from typing import Dict, List
 import litellm
 from .adapter import LLMAdapter
+import logging
+import sys
 
 # Configure DSPy to use our adapter by default
 adapter = LLMAdapter()
+
+def setup_logging(verbose=False):
+    """Configure logging for the llm_dspy package.
+    
+    Args:
+        verbose (bool): If True, set logging level to DEBUG, otherwise INFO
+    """
+    logger = logging.getLogger('llm_dspy')
+    if not logger.handlers:  # Only add handler if none exists
+        handler = logging.StreamHandler(sys.stderr)
+        formatter = logging.Formatter('%(levelname)s - %(name)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    return logger
 
 def completion_with_adapter(model: str, messages: List[Dict[str, str]], **kwargs):
     """Adapter function for LiteLLM to use our LLM adapter."""

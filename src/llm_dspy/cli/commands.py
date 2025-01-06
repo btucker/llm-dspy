@@ -26,7 +26,7 @@ def register_commands(cli: click.Group) -> None:
                     help='Enable verbose output'
                 )
             )
-
+        
         def parse_args(self, ctx, args):
             # Get the module spec argument
             if len(args) >= 1:
@@ -38,7 +38,39 @@ def register_commands(cli: click.Group) -> None:
                         logger.error("Invalid module signature format. Expected: ModuleName(inputs -> outputs)")
                         ctx.exit(1)
                     
-                    _, signature_str = match.groups()
+                    module_name, signature_str = match.groups()
+                    
+                    # Special handling for EnhancedRAGModule
+                    if module_name == 'EnhancedRAGModule':
+                        # Clear existing params that were dynamically added
+                        self.params = [p for p in self.params if not isinstance(p, click.Option) or p.name == 'verbose']
+                        
+                        # Add required options
+                        self.params.extend([
+                            click.Option(
+                                ('--collection_name',),
+                                required=True,
+                                help='Name of collection to use for retrieval'
+                            ),
+                            click.Option(
+                                ('--question',),
+                                required=True,
+                                help='Question to answer'
+                            ),
+                            click.Option(
+                                ('--k',),
+                                type=int,
+                                default=3,
+                                help='Number of passages to retrieve'
+                            ),
+                            click.Option(
+                                ('--max_hops',),
+                                type=int,
+                                default=2,
+                                help='Maximum number of reasoning hops'
+                            )
+                        ])
+                        return super().parse_args(ctx, args)
                     
                     # Parse signature using DSPy's ensure_signature
                     signature = ensure_signature(signature_str)
@@ -77,6 +109,39 @@ def register_commands(cli: click.Group) -> None:
                 sys.exit(1)
             
             module_name, signature = match.groups()
+            
+            # Special handling for EnhancedRAGModule
+            if module_name == 'EnhancedRAGModule':
+                if 'collection_name' not in kwargs:
+                    logger.error("Error: Missing required option --collection_name")
+                    sys.exit(1)
+                if 'question' not in kwargs:
+                    logger.error("Error: Missing required option --question")
+                    sys.exit(1)
+                
+                # Create module instance
+                try:
+                    module = dspy.EnhancedRAGModule(
+                        collection_name=kwargs['collection_name'],
+                        k=kwargs.get('k', 3),
+                        max_hops=kwargs.get('max_hops', 2)
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating module instance: {str(e)}")
+                    sys.exit(1)
+                
+                # Run the module
+                try:
+                    result = module.forward(question=kwargs['question'])
+                    if verbose:
+                        logger.debug(f"Module result: {result}")
+                except Exception as e:
+                    logger.error(f"Error running module: {str(e)}")
+                    sys.exit(1)
+                
+                # Return the result
+                click.echo(result.answer)
+                return
             
             # Parse signature using DSPy's ensure_signature
             signature = ensure_signature(signature)

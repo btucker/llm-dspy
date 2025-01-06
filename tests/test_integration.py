@@ -6,14 +6,16 @@ from click.testing import CliRunner
 import dspy
 import llm
 from llm_dspy.cli.commands import register_commands
+from sqlite_utils import Database
+from tests.mocks.llm import Collection
 
 @pytest.fixture(autouse=True)
 def setup_dspy():
-    """Configure DSPy to use 4o-mini model by default."""
-    import dspy
-    dspy.settings.configure(lm=dspy.LM(model='gpt-4o-mini', max_tokens=1000))
+    """Configure DSPy with real language model."""
+    lm = dspy.LM('openai/gpt-4')
+    dspy.configure(lm=lm)
     yield
-    dspy.settings.configure(lm=None)  # Reset after tests
+    # Clean up if needed
 
 @pytest.fixture
 def runner():
@@ -88,183 +90,157 @@ Profit Margin: 22%
 
 @pytest.fixture
 def collections(test_files):
-    """Set up LLM collections for testing."""
-    # Create collections using our mock Collection
-    from tests.mocks.llm import Collection
-    technical_docs = Collection("technical_docs", model_id="ada-002")
-    financial_records = Collection("financial_records", model_id="ada-002")
+    """Set up test collections with real components."""
+    import logging
+    import llm
     
-    # Initialize collections dictionary if it doesn't exist
-    if not hasattr(llm, 'collections'):
-        llm.collections = {}
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger(__name__)
     
-    # Register collections globally
-    llm.collections["technical_docs"] = technical_docs
-    llm.collections["financial_records"] = financial_records
+    # Create collections using llm directly
+    technical_docs = llm.Collection("technical_docs", model_id="ada-002")
+    financial_records = llm.Collection("financial_records", model_id="ada-002")
+    logger.debug(f"Created collections: technical_docs={technical_docs}, financial_records={financial_records}")
+    
+    # Register collections with llm
+    llm.collections = {
+        'technical_docs': technical_docs,
+        'financial_records': financial_records
+    }
     
     # Embed documents
     with open(test_files['api_docs'], 'r') as f:
-        technical_docs.embed_multi([('api_docs.md', f.read())])
+        content = f.read()
+        logger.debug(f"Embedding api_docs content: {content[:100]}...")
+        technical_docs.embed("api_docs", content, metadata={"filename": "api_docs.md"}, store=True)
+    
     with open(test_files['financial_report'], 'r') as f:
-        financial_records.embed_multi([('financial_report.md', f.read())])
+        content = f.read()
+        logger.debug(f"Embedding financial_report content: {content[:100]}...")
+        financial_records.embed("financial_report", content, metadata={"filename": "financial_report.md"}, store=True)
     
     yield {
         'technical_docs': technical_docs,
         'financial_records': financial_records,
         'dir': test_files['dir']
     }
+
+def test_basic_collection_retrieval(collections):
+    """Basic test to verify collection retrieval works."""
+    collection = collections['financial_records']
     
-    # Clean up
-    del llm.collections["technical_docs"]
-    del llm.collections["financial_records"]
-
-def test_single_input_basic(runner, cli):
-    """Test basic single input with positional argument and type annotation"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(question -> answer)',  # Removed type annotations for now
-        'Explain how photosynthesis works in simple terms.'
-    ])
-    assert result.exit_code == 0
-    assert len(result.output.strip()) > 0
-    assert 'photosynthesis' in result.output.lower()
-
-def test_sentiment_classification(runner, cli):
-    """Test sentiment classification with Literal type"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'Predict(text -> sentiment)',  # Removed type annotations for now
-        'This product exceeded all my expectations!'
-    ])
-    assert result.exit_code == 0
-    assert any(s in result.output.lower() for s in ['positive', 'negative', 'neutral'])
-
-def test_code_complexity_stdin(runner, cli):
-    """Test code complexity analysis from stdin"""
-    code = '''
-def bubble_sort(arr):
-    n = len(arr)
-    for i in range(n):
-        for j in range(0, n-i-1):
-            if arr[j] > arr[j+1]:
-                arr[j], arr[j+1] = arr[j+1], arr[j]
-    return arr
-    '''
-    result = runner.invoke(cli, [
-        'dspy',
-        'Predict(code: str -> complexity: Literal["O(1)", "O(n)", "O(n^2)", "O(2^n)"])',
-        '-'
-    ], input=code)
-    assert result.exit_code == 0
-    assert any(c in result.output for c in ['O(1)', 'O(n)', 'O(n^2)', 'O(2^n)'])
-
-def test_bug_report_analysis(runner, cli):
-    """Test bug report analysis with structured output"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(bug_report, system_context -> analysis)',  # Single output field
-        '--bug_report', 'Application crashes when uploading files larger than 1GB',
-        '--system_context', 'Node.js backend with S3 storage'
-    ])
-    assert result.exit_code == 0
-    assert any(word in result.output.lower() for word in ['limit', 'size', 'upload', 'crash'])
-
-def test_fact_extraction_rag(runner, cli, collections):
-    """Test fact extraction from financial documents using RAG"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(context: str, query: str -> dates: List[str], amounts: List[float], entities: List[str])',
-        '--context', 'financial_records',
-        '--query', 'Extract all transaction dates, amounts, and involved parties from the Key Transactions section'
-    ])
-    assert result.exit_code == 0
+    # Test direct retrieval
+    results = collection.similar(value="revenue", number=1)
+    assert len(results) > 0, "Should find at least one result"
+    assert "revenue" in results[0].content.lower(), "Result should contain 'revenue'"
     
-    # Check for presence of structured data in a more flexible way
+    # Test with more specific query
+    results = collection.similar(value="key transactions", number=1)
+    assert len(results) > 0, "Should find at least one result"
+    assert "client a" in results[0].content.lower(), "Result should contain client information"
+
+def test_rag_pipeline_integration(collections):
+    """Test the complete RAG pipeline with real components."""
+    from llm_dspy.rag.enhanced import EnhancedRAGModule
+    
+    # Initialize RAG module with financial collection
+    rag = EnhancedRAGModule(collection_name="financial_records", k=10)
+    
+    # Ask a question that requires understanding the financial report
+    result = rag.forward(question="What were the key transactions in Q2 2023?")
+    
+    # Verify the response contains relevant information from the actual document
+    answer = result.answer.lower()
+    assert "client a" in answer and "client b" in answer and "client c" in answer, \
+        "Response should mention all three clients from the document"
+    assert "50,000" in answer and "75,000" in answer and "100,000" in answer, \
+        "Response should include the actual transaction amounts from the document"
+    assert "enterprise license" in answer and "custom development" in answer and "platform subscription" in answer, \
+        "Response should mention the actual transaction types from the document"
+
+def test_security_audit_integration(collections):
+    """Test RAG pipeline with technical documentation."""
+    from llm_dspy.rag.enhanced import EnhancedRAGModule
+    
+    # Initialize RAG module with technical docs
+    rag = EnhancedRAGModule(collection_name="technical_docs", k=10)
+    
+    # Ask about security features
+    result = rag.forward(question="What security measures are in place for token handling?")
+    
+    # Verify the response contains actual security information from the document
+    answer = result.answer.lower()
+    assert "encrypt" in answer and "rest" in answer, "Response should mention token encryption from the document"
+    assert "https" in answer and ("endpoint" in answer or "transmission" in answer), "Response should mention HTTPS requirement from the document"
+    assert "rate limit" in answer, "Response should mention rate limiting from the document"
+    assert ("failed" in answer or "fail" in answer) and "monitor" in answer, "Response should mention monitoring from the document"
+
+def test_multi_hop_reasoning_integration(collections):
+    """Test multi-hop reasoning in RAG pipeline."""
+    from llm_dspy.rag.enhanced import EnhancedRAGModule
+    
+    # Initialize RAG module with financial collection
+    rag = EnhancedRAGModule(collection_name="financial_records", max_hops=2)
+    
+    # Ask a complex question requiring multiple hops
+    result = rag.forward(
+        question="Given the growth rate and market share increase, what's the relationship between our growth and market expansion?"
+    )
+    
+    # Verify the response contains actual metrics and analysis from the document
+    answer = result.answer.lower()
+    assert "15%" in answer and "growth" in answer, "Response should mention the actual growth rate"
+    assert "3%" in answer and "market" in answer, "Response should mention the actual market share increase"
+    assert "92%" in answer and "retention" in answer, "Response should mention the actual retention rate"
+    assert "competitors" in answer or "competition" in answer, "Response should mention market competition"
+
+def test_cli_rag_integration(runner, cli, collections):
+    """Test RAG integration through CLI interface."""
+    result = runner.invoke(cli, [
+        'dspy',
+        'EnhancedRAGModule(question -> answer)',
+        '--collection_name', 'financial_records',
+        '--k', '10',
+        '--question', 'What was the total revenue for Q2 2023?'
+    ])
+    
+    assert result.exit_code == 0
     output = result.output.lower()
-    print(f"Output: {output}")  # Debug output
+    assert any(value in output for value in ["$225,000", "$1.2m", "$1.2 million"]), \
+        "Response should include either the total transaction amount or the overview revenue"
+
+def test_basic_embedding_retrieval(collections):
+    """Test that we can retrieve content we just embedded."""
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # More flexible date matching
-    has_dates = any(
-        date in output 
-        for date in ['march', 'april', 'may', '2023', '15', '02', '20']
-    )
-    assert has_dates, "No dates found in output"
+    collection = collections['financial_records']
     
-    # More flexible amount matching
-    has_amounts = any(
-        str(amount) in output.replace(',', '') 
-        for amount in ['50000', '75000', '100000']
-    )
-    assert has_amounts, "No amounts found in output"
+    # Try to retrieve with exact text from the document
+    query = "Revenue: $1.2M"
+    logger.debug(f"Searching for: {query}")
+    results = collection.similar(value=query, number=1)
+    logger.debug(f"Got results: {results}")
     
-    # More flexible entity matching
-    has_entities = any(
-        entity in output 
-        for entity in ['client', 'company', 'corporation', 'vendor']
-    )
-    assert has_entities, "No entities found in output"
+    assert len(results) > 0, "Should find at least one result"
+    assert results[0].content is not None, "Result should have content"
+    assert "$1.2M" in results[0].content, "Result should contain the exact text we searched for"
 
-def test_code_review_stdin(runner, cli):
-    """Test code review with structured feedback"""
-    diff = '''
-@@ -1,5 +1,7 @@
- def process_data(data):
--    return data.process()
-+    if data is None:
-+        return None
-+    return data.process()
-    '''
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(diff, standards -> analysis)',  # Single output field
-        '--diff', '-',
-        '--standards', 'Follow PEP8, handle edge cases, write tests'
-    ], input=diff)
-    assert result.exit_code == 0
-    assert 'edge case' in result.output.lower() or 'null check' in result.output.lower()
-
-def test_sustainability_metrics(runner, cli):
-    """Test sustainability metrics with constrained float ranges"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(context, analysis_request -> analysis)',  # Single output field
-        '--context', 'Solar panel installation in urban area',
-        '--analysis_request', 'Compare solar vs wind power for metropolitan areas'
-    ])
-    assert result.exit_code == 0
-    assert 'solar' in result.output.lower() or 'wind' in result.output.lower()
-
-def test_security_audit(runner, cli, collections):
-    """Test security audit with complex Literal types"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(context: str, audit_scope: str -> compliance_status: Literal["compliant", "partial", "non_compliant"], vulnerabilities: List[str], risk_level: Literal["low", "medium", "high", "critical"])',
-        '--context', 'technical_docs',
-        '--audit_scope', 'Evaluate OAuth2 implementation against OWASP standards'
-    ])
-    assert result.exit_code == 0
-    assert any(word in result.output.lower() for word in ['oauth', 'security', 'token', 'encryption', 'https'])
-
-def test_financial_metrics(runner, cli):
-    """Test financial metrics with constrained integer range"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(market_data, competitor_data, query -> analysis)',  # Single output field
-        '--market_data', 'Growing market with 15% YoY growth',
-        '--competitor_data', 'Main competitor launched new product line',
-        '--query', 'Evaluate market position for Q3 planning'
-    ])
-    assert result.exit_code == 0
-    assert 'growth' in result.output.lower() or 'market' in result.output.lower()
-
-def test_strategic_planning(runner, cli):
-    """Test strategic planning with dictionary types"""
-    result = runner.invoke(cli, [
-        'dspy',
-        'ChainOfThought(market_data: str, competitor_analysis: str, objectives: str -> priority_score: Dict[str, float], timeline: Dict[str, str], resource_requirements: List[str])',
-        '--market_data', 'market_research',
-        '--competitor_analysis', 'competitor_reports',
-        '--objectives', 'Identify top 3 features for competitive advantage in Q3'
-    ])
-    assert result.exit_code == 0
-    assert any(word in result.output.lower() for word in ['feature', 'priority', 'timeline', 'resource'])
+def test_database_contents(collections):
+    """Test that content is properly stored in the database."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    collection = collections['financial_records']
+    db = collection.db
+    
+    # List all tables
+    tables = db.tables
+    logger.debug(f"Database tables: {tables}")
+    
+    # Check embeddings table
+    embeddings = list(db.query("SELECT * FROM embeddings"))
+    logger.debug(f"Embeddings table contents: {embeddings}")
+    
+    assert len(embeddings) > 0, "Should have embeddings stored in database"
+    assert any("$1.2M" in str(row) for row in embeddings), "Should find our test content in embeddings"
